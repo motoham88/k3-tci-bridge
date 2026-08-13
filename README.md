@@ -11,7 +11,8 @@ the same port, so a phone on the LAN needs nothing installed.
 Working today: full CAT control, RX and TX audio at 48 kHz, CW keying with
 macros, filter and power control, S-meter, PTT with a safety watchdog,
 multi-client state broadcast, and a web UI. First on-air CW QSO made through
-it on 20 m.
+it on 20 m, and **WSJT-X 3.0.1 runs over TCI** — rig control and audio both,
+no sound-card routing.
 
 ---
 
@@ -89,6 +90,11 @@ software.
 and no other sign. Anything whose failure corrupts later decisions needs
 set-verify-retry.
 
+**WSJT-X transmits silence without TX_CHRONO.** It does not stream TX audio
+freely — it waits to be asked, via a header-only type-3 frame every 21.33 ms.
+A server that never sends them sees the client key up correctly and put out
+nothing, with no error at either end.
+
 **The ALSA period must equal the TCI frame size.** A mismatched period
 injected 85 ms of latency while CPU stayed near zero — the risk in the audio
 path was never CPU.
@@ -139,6 +145,9 @@ Then open `http://<pi>:50001/`.
 
 - The built-in **web UI** — nothing to install, works on a phone on the LAN.
   This is the primary client.
+- **WSJT-X 3.0.1** — set the rig to the TCI/ExpertSDR option pointed at
+  `<pi>:50001`, tick *Use TCI Audio*, and put the radio in DIGU. Confirmed
+  working. Needs the TX_CHRONO clock, which is why it exists here.
 - [`bridge/tciplay.py`](bridge/tciplay.py) — a ~90-line headless listener,
   useful for checking the audio path from another machine.
 

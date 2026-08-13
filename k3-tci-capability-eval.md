@@ -284,6 +284,7 @@ sufficient and are what the benchmark used.
    receive-only one.
 2. **Apply the config changes above**, then re-measure CAT latency.
 3. **Build the protocol skeleton**: WebSocket server, init handshake,
-   `ready`/`start`, and `vfo`/`modulation`/`trx` against TCI Remote.
+   `ready`/`start`, and `vfo`/`modulation`/`trx`. *(Done — plus audio, CW,
+   filters and a web UI. The built-in UI is now the primary client.)*
 4. **Multi-hour audio soak** in the background while step 3 proceeds.
 5. Settle the four remaining verify items in the command map.

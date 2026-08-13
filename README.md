@@ -137,12 +137,14 @@ Then open `http://<pi>:50001/`.
 
 ## Clients
 
-- The built-in web UI — nothing to install, works on a phone on the LAN.
-- [`bridge/tciplay.py`](bridge/tciplay.py) — a ~90-line headless listener.
-- **TCI Remote** by ON7OFF (Android/iOS/browser) — third-party, not included
-  here. Get it from <https://pure-editions.com/on7off/TCI-Remote/>. Connect
-  directly to `<pi>:50001`; the Compactor is only needed for bandwidth
-  reduction over cellular.
+- The built-in **web UI** — nothing to install, works on a phone on the LAN.
+  This is the primary client.
+- [`bridge/tciplay.py`](bridge/tciplay.py) — a ~90-line headless listener,
+  useful for checking the audio path from another machine.
+
+Any TCI-capable client should work, since the bridge implements the standard
+protocol rather than anything bespoke. Third-party clients are not bundled
+here.
 
 ---
 

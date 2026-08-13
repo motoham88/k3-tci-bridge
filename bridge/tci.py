@@ -83,6 +83,10 @@ class Bridge:
         # unkey immediately rather than waiting out the watchdog -- other
         # clients being connected is no reason to keep transmitting.
         self._ptt_owner = None
+        # Whether the keying client intends to send TX audio. WSJT-X and
+        # friends wait to be asked (TX_CHRONO) rather than streaming freely,
+        # so the server needs to know whether to start that clock.
+        self.ptt_wants_audio = False
         self._current_client = None
         self._lock = threading.RLock()
 
@@ -322,6 +326,14 @@ class Bridge:
                         return ["trx:0,false"], []
                 # Arm the watchdog BEFORE keying, so a failure between the
                 # send and the confirm is still covered.
+                # TCI's optional third arg names the audio source. "dax" or
+                # "tci" explicitly request TX audio; with no source, infer it
+                # from the mode, since the digital modes are only ever keyed
+                # by something that intends to modulate.
+                src = args[2].lower() if len(args) > 2 else ""
+                self.ptt_wants_audio = (
+                    src in ("dax", "tci")
+                    or (src == "" and self.state.mode in ("digu", "digl")))
                 self._ptt_deadline = time.monotonic() + PTT_WATCHDOG_S
                 self._ptt_owner = self._current_client
                 self.cat.send("TX")
@@ -330,6 +342,7 @@ class Bridge:
                     log.warning("TX; did not take")
                     self._ptt_deadline = None
                     self._ptt_owner = None
+                    self.ptt_wants_audio = False
                 self.state.transmitting = ok
             else:
                 self.cat.send("RX")
@@ -346,6 +359,7 @@ class Bridge:
                         return [], ["trx:0,true"]
                 self._ptt_deadline = None
                 self._ptt_owner = None
+                self.ptt_wants_audio = False
                 self.state.transmitting = False
             return [], [f"trx:0,{bool_str(self.state.transmitting)}"]
         return [f"trx:0,{bool_str(self.state.transmitting)}"], []
@@ -701,6 +715,7 @@ class Bridge:
                 self._await_tq(False)
                 self._ptt_deadline = None
                 self._ptt_owner = None
+                self.ptt_wants_audio = False
                 self.state.transmitting = False
                 return "trx:0,false"
         return None

@@ -158,8 +158,11 @@ Real options for IQ/spectrum later, if wanted:
   sourced from/sent to the K3's USB audio codec.
 - S-meter and basic TX telemetry (`rx_smeter`, `tx_sensors`) via polling.
 - No IQ streaming, no panadapter, no `#BMP` polling.
-- Test client: TCI Remote (ON7OFF) — protocol reference verified against this
-  app specifically, good first integration target.
+- Test client: originally TCI Remote (ON7OFF), whose published protocol
+  reference is what the mapping was verified against. Not adopted in the end
+  — its browser build is built around the author's Compactor tunnel, and the
+  project ships its own web UI instead. The protocol findings it produced
+  remain valid and are cited where used.
 
 ## Suggested stack
 

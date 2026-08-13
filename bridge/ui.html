@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>K3 Remote</title>
+<style>
+:root{
+  --bg:#12151a; --panel:#1a1f27; --panel2:#222834; --line:#2e3644;
+  --ink:#e6ebf2; --dim:#8b97a8; --accent:#4ea3ff; --on:#33d17a;
+  --warn:#f5a524; --off:#e0413e; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--ink); font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  padding:10px; display:flex; flex-direction:column; gap:10px;
+  max-width:760px; margin:0 auto; -webkit-user-select:none; user-select:none;
+}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px}
+.row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.spacer{flex:1}
+h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
+.sub{color:var(--dim); font-size:12px}
+
+/* status */
+#dot{width:9px;height:9px;border-radius:50%;background:var(--off);flex:none}
+#dot.on{background:var(--on)} #dot.wait{background:var(--warn)}
+
+/* frequency: click upper/lower half of a digit to step that decade */
+#freq{display:flex; justify-content:center; gap:1px; font-family:var(--mono);
+  font-size:clamp(30px,10vw,54px); font-weight:600; letter-spacing:.02em; padding:2px 0}
+.d{position:relative; padding:2px 1px; border-radius:4px; cursor:ns-resize; min-width:.62em; text-align:center}
+.d:hover{background:var(--panel2)}
+.d.sep{cursor:default; color:var(--dim); min-width:.34em}
+.d.sep:hover{background:none}
+.d .hit{position:absolute;left:0;right:0;height:50%}
+.d .up{top:0} .d .dn{bottom:0}
+.d.lead{color:#4a5364}
+#vfob{font-family:var(--mono); color:var(--dim); font-size:13px; text-align:center}
+
+/* buttons */
+button{
+  background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+  border-radius:8px; padding:9px 11px; font-size:13px; font-family:inherit;
+  cursor:pointer; touch-action:manipulation;
+}
+button:hover{border-color:#3f4a5c}
+button.on{background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600}
+button:disabled{opacity:.45; cursor:not-allowed}
+.modes{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
+.steps{display:grid; grid-template-columns:repeat(5,1fr); gap:6px}
+
+/* meter */
+#meter{height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; position:relative}
+#bar{height:100%; width:0; background:linear-gradient(90deg,var(--on),#c9d635 62%,var(--off));
+  transition:width .09s linear}
+#scale{display:flex; justify-content:space-between; color:var(--dim); font-size:10px;
+  font-family:var(--mono); margin-top:3px}
+#sval{font-family:var(--mono); font-size:13px; min-width:8.5em; text-align:right}
+
+/* ptt */
+#ptt{width:100%; padding:20px; font-size:19px; font-weight:700; letter-spacing:.06em;
+  background:#2b1d1d; border-color:#5a2b2b; color:#ffb4b0}
+#ptt.tx{background:var(--off); border-color:var(--off); color:#fff}
+input[type=range]{width:100%; accent-color:var(--accent)}
+#log{font-family:var(--mono); font-size:11px; color:var(--dim); height:76px;
+  overflow-y:auto; white-space:pre-wrap; line-height:1.35}
+.lbl{font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
+</style>
+</head>
+<body>
+
+<div class="panel row">
+  <span id="dot"></span>
+  <h1 id="dev">connecting…</h1>
+  <span class="spacer"></span>
+  <span class="sub" id="host"></span>
+</div>
+
+<div class="panel">
+  <div id="freq"></div>
+  <div id="vfob">B  —</div>
+  <div class="steps" style="margin-top:8px">
+    <button data-step="-1000">−1k</button>
+    <button data-step="-100">−100</button>
+    <button data-step="100">+100</button>
+    <button data-step="1000">+1k</button>
+    <button id="ab">A⇄B</button>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="lbl" style="margin-bottom:6px">Mode</div>
+  <div class="modes" id="modes"></div>
+  <div class="lbl" style="margin:10px 0 6px">Filter <span id="bwnow" class="sub"></span></div>
+  <div class="steps" id="filters"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="split">SPLIT</button>
+    <span class="spacer"></span>
+    <span class="sub" id="ifinfo"></span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row"><span class="lbl">S-meter</span><span class="spacer"></span><span id="sval">—</span></div>
+  <div id="meter"><div id="bar"></div></div>
+  <div id="scale"><span>S1</span><span>S3</span><span>S5</span><span>S7</span><span>S9</span><span>+20</span><span>+40</span><span>+60</span></div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <button id="audio">▶ Audio</button>
+    <span class="sub" id="astat">off</span>
+    <span class="spacer"></span>
+    <span class="sub" id="lat"></span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Pwr</span>
+    <input type="range" id="pwr" min="0" max="100" value="5">
+    <span class="sub" id="pwrw" style="min-width:3.5em;text-align:right">5 W</span>
+    <button id="tune">TUNE</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Vol</span>
+    <input type="range" id="vol" min="-60" max="0" value="-10">
+    <span class="sub" id="voldb" style="min-width:3.5em;text-align:right">−10 dB</span>
+  </div>
+</div>
+
+<div class="panel" id="cwpanel">
+  <div class="row">
+    <span class="lbl">CW</span>
+    <span class="sub" id="cwhint"></span>
+    <span class="spacer"></span>
+    <span class="lbl">WPM</span>
+    <input type="number" id="wpm" min="8" max="50" value="20"
+           style="width:4.2em;background:var(--panel2);color:var(--ink);
+                  border:1px solid var(--line);border-radius:6px;padding:6px">
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input type="text" id="cwtext" placeholder="type, Enter to send" autocomplete="off"
+           style="flex:1;min-width:10em;background:var(--panel2);color:var(--ink);
+                  border:1px solid var(--line);border-radius:8px;padding:10px;
+                  font-family:var(--mono);font-size:15px">
+    <button id="cwsend">Send</button>
+    <button id="cwstop">Stop</button>
+  </div>
+  <div class="steps" id="cwmacros" style="margin-top:8px;grid-template-columns:repeat(4,1fr)"></div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl">Call</span>
+    <input type="text" id="mycall" placeholder="your call" autocomplete="off"
+           style="width:7em;background:var(--panel2);color:var(--ink);
+                  border:1px solid var(--line);border-radius:6px;padding:6px;
+                  font-family:var(--mono);text-transform:uppercase">
+    <span class="lbl">His</span>
+    <input type="text" id="hiscall" placeholder="worked" autocomplete="off"
+           style="width:7em;background:var(--panel2);color:var(--ink);
+                  border:1px solid var(--line);border-radius:6px;padding:6px;
+                  font-family:var(--mono);text-transform:uppercase">
+  </div>
+</div>
+
+<button id="ptt">PTT — HOLD</button>
+
+<div class="panel"><div id="log"></div></div>
+
+<script>
+"use strict";
+// ── connection ────────────────────────────────────────────────────────────
+// Same host and port the page came from, so the page origin and the socket
+// always agree. Serving over plain http is deliberate: a browser refuses a
+// ws:// socket from an https:// page, and the bridge speaks ws://.
+const HOST = location.host || "192.168.1.198:50001";
+const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
+            ready:false, flo:0, fhi:0 };
+const $ = s => document.querySelector(s);
+let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
+
+$("#host").textContent = HOST;
+
+function log(m){
+  const el = $("#log");
+  const t = new Date().toTimeString().slice(0,8);
+  el.textContent += `${t}  ${m}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function send(c){ if (ws && ws.readyState === 1) ws.send(c.endsWith(";") ? c : c + ";"); }
+
+function connect(){
+  ws = new WebSocket(`ws://${HOST}`);
+  ws.binaryType = "arraybuffer";
+  $("#dot").className = "wait";
+  ws.onopen  = () => log("socket open");
+  ws.onclose = () => { $("#dot").className=""; $("#dev").textContent="disconnected";
+                       S.ready=false; log("closed — retrying in 2 s"); setTimeout(connect, 2000); };
+  ws.onerror = () => log("socket error");
+  ws.onmessage = e => {
+    if (typeof e.data === "string") e.data.split(";").forEach(t => t.trim() && onText(t.trim()));
+    else onAudio(e.data);
+  };
+}
+
+// ── text protocol ─────────────────────────────────────────────────────────
+function onText(msg){
+  const i = msg.indexOf(":");
+  const name = (i < 0 ? msg : msg.slice(0,i)).toLowerCase();
+  const args = i < 0 ? [] : msg.slice(i+1).split(",");
+
+  switch(name){
+    case "device":  $("#dev").textContent = args[0] || "TCI"; break;
+    case "ready":   S.ready = true; $("#dot").className = "on"; log("ready"); break;
+    case "start":   break;
+    case "vfo":
+      if (args[1] === "0"){ S.vfoA = +args[2]; drawFreq(); }
+      else if (args[1] === "1"){ S.vfoB = +args[2]; $("#vfob").textContent = "B  " + fmt(S.vfoB); }
+      break;
+    case "modulation":
+      // The bridge may use any case; normalise like other TCI clients do.
+      S.mode = (args[1]||"").toUpperCase(); paintModes(); paintFilters(); paintCw(); break;
+    case "rx_filter_band":
+      S.flo = +args[1]; S.fhi = +args[2]; paintFilters(); break;
+    case "split_enable":
+      S.split = args[1] === "true"; $("#split").classList.toggle("on", S.split); break;
+    case "trx":
+      S.tx = args[1] === "true"; paintPtt(); break;
+    case "rx_smeter":
+      setMeter(+args[1]); break;
+    case "drive":
+      if (!isNaN(+args[1])) { $("#pwr").value = +args[1]; $("#pwrw").textContent = (+args[1]) + " W"; }
+      break;
+    case "tune": break;
+    case "cw_keyer_speed":
+      if (!isNaN(+args[0])) $("#wpm").value = +args[0]; break;
+    case "volume":
+      if (!isNaN(+args[0])) { $("#vol").value = +args[0]; $("#voldb").textContent = (+args[0]) + " dB"; }
+      break;
+    case "protocol": case "receive_only": case "trx_count": case "channels_count":
+    case "vfo_limits": case "if_limits": case "modulations_list": case "iq_samplerate":
+    case "audio_samplerate": case "rx_enable": case "rit_enable": case "xit_enable":
+    case "rit_offset": case "mute": case "dds": case "split":
+    case "cw_macros_speed": case "audio_start": case "audio_stop":
+    case "tx_profiles_ex": case "tx_profile_ex": case "audio_stream_sample_type":
+    case "audio_stream_channels": case "audio_stream_samples":
+      break;                                   // known, nothing to show
+    default: log("? " + msg);
+  }
+}
+
+// ── frequency display: click or wheel a digit to step that decade ─────────
+function fmt(hz){
+  const s = String(Math.max(0, Math.round(hz))).padStart(9,"0");
+  return `${(+s.slice(0,-6))}.${s.slice(-6,-3)}.${s.slice(-3)}`;
+}
+function drawFreq(){
+  const s = String(Math.max(0, Math.round(S.vfoA))).padStart(9,"0");
+  const el = $("#freq"); el.innerHTML = "";
+  let lead = true;
+  for (let i = 0; i < s.length; i++){
+    const decade = s.length - 1 - i;            // 10^decade for this column
+    if (i === 3 || i === 6){
+      const sep = document.createElement("span");
+      sep.className = "d sep"; sep.textContent = "."; el.appendChild(sep);
+    }
+    if (s[i] !== "0") lead = false;
+    const d = document.createElement("span");
+    d.className = "d" + (lead && decade > 5 ? " lead" : "");
+    d.textContent = s[i];
+    const up = document.createElement("span"); up.className = "hit up";
+    const dn = document.createElement("span"); dn.className = "hit dn";
+    up.onclick = e => { e.stopPropagation(); step(+Math.pow(10, decade)); };
+    dn.onclick = e => { e.stopPropagation(); step(-Math.pow(10, decade)); };
+    d.onwheel = e => { e.preventDefault(); step((e.deltaY < 0 ? 1 : -1) * Math.pow(10, decade)); };
+    d.append(up, dn); el.appendChild(d);
+  }
+}
+function step(hz){
+  S.vfoA = Math.max(0, S.vfoA + hz);
+  drawFreq();                                   // optimistic; the bridge
+  send(`vfo:0,0,${Math.round(S.vfoA)}`);        // echoes the accepted value
+}
+document.querySelectorAll("[data-step]").forEach(b =>
+  b.onclick = () => step(+b.dataset.step));
+$("#ab").onclick = () => { const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };
+
+// ── modes ─────────────────────────────────────────────────────────────────
+const MODES = ["LSB","USB","CWL","CWU","AM","NFM","DIGL","DIGU"];
+const mEl = $("#modes");
+MODES.forEach(m => {
+  const b = document.createElement("button");
+  b.textContent = m; b.dataset.m = m;
+  b.onclick = () => send(`modulation:0,${m.toLowerCase()}`);
+  mEl.appendChild(b);
+});
+function paintModes(){
+  mEl.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("on", b.dataset.m === S.mode));
+}
+$("#split").onclick = () => send(`split_enable:0,${S.split ? "false" : "true"}`);
+
+// ── filter width ──────────────────────────────────────────────────────────
+// The bridge takes carrier-relative edges. Where the passband sits relative
+// to the carrier is mode-dependent: SSB is offset, CW/AM/FM straddle it.
+const FILTERS = {
+  ssb:[[300,2700,"2.7k"],[300,2400,"2.4k"],[300,1800,"1.8k"],[400,1200,"800"],[300,3600,"3.6k"]],
+  cw: [[-700,700,"1.4k"],[-350,350,"700"],[-200,200,"400"],[-125,125,"250"],[-50,50,"100"]],
+  am: [[-3000,3000,"6.0k"],[-2400,2400,"4.8k"],[-1500,1500,"3.0k"],[-1000,1000,"2.0k"],[-4000,4000,"8.0k"]],
+};
+function filterSet(){
+  if (S.mode === "CWL" || S.mode === "CWU") return FILTERS.cw;
+  if (S.mode === "AM" || S.mode === "NFM")  return FILTERS.am;
+  return FILTERS.ssb;
+}
+function paintFilters(){
+  const el = $("#filters"); el.innerHTML = "";
+  const lsb = (S.mode === "LSB" || S.mode === "DIGL");
+  for (const [lo, hi, label] of filterSet()){
+    const b = document.createElement("button");
+    b.textContent = label;
+    // LSB/DIGL passbands live on the negative side of the carrier.
+    const [a, z] = lsb && lo > 0 ? [-hi, -lo] : [lo, hi];
+    b.classList.toggle("on", Math.abs((S.fhi - S.flo) - (z - a)) < 60);
+    b.onclick = () => send(`rx_filter_band:0,${a},${z}`);
+    el.appendChild(b);
+  }
+  const w = S.fhi - S.flo;
+  $("#bwnow").textContent = w > 0 ? `${(w/1000).toFixed(w < 1000 ? 2 : 1)} kHz` : "";
+}
+
+// ── S-meter ───────────────────────────────────────────────────────────────
+// dBm → bar. S9 = -73 dBm, 6 dB per S-unit below it, so S1 = -121.
+// The bridge's dBm figure is UNCALIBRATED (see the command map), so treat
+// this as relative movement, not an absolute reading.
+function setMeter(dbm){
+  if (isNaN(dbm)) return;
+  const pct = Math.max(0, Math.min(100, (dbm + 121) / (121 - 13) * 100));
+  $("#bar").style.width = pct + "%";
+  const over = dbm + 73;
+  $("#sval").textContent = over >= 0
+    ? `S9+${Math.round(over)}  ${dbm} dBm`
+    : `S${Math.max(0, Math.round(9 + over/6))}  ${dbm} dBm`;
+}
+
+// ── audio ─────────────────────────────────────────────────────────────────
+// TCI RX frames: 64-byte header then interleaved float32 stereo at 48 kHz.
+// Header words are little-endian uint32; word 6 is the frame type (1 = RX).
+function onAudio(buf){
+  if (!ctx || buf.byteLength <= 64) return;
+  const h = new Uint32Array(buf, 0, 16);
+  if (h[6] !== 1) return;                       // ignore IQ / TX_CHRONO
+  const pcm = new Float32Array(buf, 64);
+  const n = pcm.length >> 1;
+  const ab = ctx.createBuffer(2, n, 48000);
+  const L = ab.getChannelData(0), R = ab.getChannelData(1);
+  for (let i = 0; i < n; i++){ L[i] = pcm[2*i]; R[i] = pcm[2*i+1]; }
+  const src = ctx.createBufferSource();
+  src.buffer = ab; src.connect(gain);
+  const now = ctx.currentTime;
+  // Small jitter buffer. If we have fallen behind (tab throttled, network
+  // hiccup) reset rather than queueing ever-growing latency.
+  if (nextT < now + 0.02 || nextT > now + 0.6) nextT = now + 0.10;
+  src.start(nextT);
+  nextT += ab.duration;
+  frames++; lastFrame = performance.now();
+}
+$("#audio").onclick = async () => {
+  if (!S.audio){
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)({sampleRate:48000});
+    await ctx.resume();                          // needs a user gesture
+    if (!gain){ gain = ctx.createGain(); gain.connect(ctx.destination); }
+    gain.gain.value = 1;
+    nextT = 0; frames = 0;
+    send("audio_start:0"); send(`volume:${$("#vol").value}`);
+    S.audio = true; $("#audio").textContent = "■ Audio"; $("#audio").classList.add("on");
+    log("audio on");
+  } else {
+    send("audio_stop");
+    S.audio = false; $("#audio").textContent = "▶ Audio"; $("#audio").classList.remove("on");
+    $("#astat").textContent = "off"; log("audio off");
+  }
+};
+$("#pwr").oninput = e => { $("#pwrw").textContent = e.target.value + " W"; };
+$("#pwr").onchange = e => send(`drive:0,${e.target.value}`);
+$("#tune").onclick = () => {
+  // Momentary: a carrier long enough for the ATU, then straight back to RX.
+  send("tune:0,true"); log("tune");
+  setTimeout(() => send("tune:0,false"), 2500);
+};
+$("#vol").oninput = e => {
+  $("#voldb").textContent = e.target.value + " dB";
+  send(`volume:${e.target.value}`);
+};
+setInterval(() => {
+  if (!S.audio) return;
+  const stale = performance.now() - lastFrame;
+  $("#astat").textContent = stale < 500 ? `${frames} frames` : "stalled";
+  if (ctx) $("#lat").textContent = `buffer ${Math.max(0,(nextT - ctx.currentTime)*1000|0)} ms`;
+}, 500);
+
+// ── PTT ───────────────────────────────────────────────────────────────────
+// Hold to transmit. Release, pointer-cancel and page-hide all unkey: the
+// bridge has a watchdog, but the UI should never be the reason it is needed.
+const ptt = $("#ptt");
+const key = on => send(`trx:0,${on ? "true" : "false"}`);
+ptt.addEventListener("pointerdown", e => { e.preventDefault(); key(true); });
+["pointerup","pointercancel","pointerleave"].forEach(ev =>
+  ptt.addEventListener(ev, () => key(false)));
+window.addEventListener("blur", () => { if (S.tx) key(false); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && S.tx) key(false); });
+function paintPtt(){
+  ptt.classList.toggle("tx", S.tx);
+  ptt.textContent = S.tx ? "● TRANSMITTING" : "PTT — HOLD";
+}
+
+// ── CW ────────────────────────────────────────────────────────────────────
+// No microphone involved, which is the point: getUserMedia needs a secure
+// context and this page is plain http on a LAN address. CW text goes over
+// the same WebSocket as everything else.
+const call = id => (document.getElementById(id).value || "").toUpperCase().trim();
+// K3 prosign escapes inside KY text: ( = KN, + = AR, = = BT, % = AS, * = SK
+const MACROS = [
+  ["CQ",   () => `CQ CQ DE ${call("mycall")} ${call("mycall")} K`],
+  ["Call", () => `${call("hiscall")} DE ${call("mycall")} K`],
+  ["5NN",  () => `${call("hiscall")} 5NN 5NN =`],
+  ["TU",   () => `TU DE ${call("mycall")} K`],
+  ["AGN",  () => "AGN AGN"],
+  ["73",   () => `73 = ${call("mycall")} *`],
+  ["?",    () => "?"],
+  ["QRZ",  () => `QRZ DE ${call("mycall")} K`],
+];
+const cwEl = $("#cwmacros");
+MACROS.forEach(([label, fn]) => {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.onclick = () => cwSend(fn());
+  cwEl.appendChild(b);
+});
+function cwSend(text){
+  text = (text || "").trim();
+  if (!text) return;
+  if (S.mode !== "CWL" && S.mode !== "CWU"){ log("not in CW — switch mode first"); return; }
+  send(`cw_msg:${text}`);
+  log("cw> " + text);
+}
+$("#cwsend").onclick = () => { cwSend($("#cwtext").value); $("#cwtext").value = ""; };
+$("#cwtext").addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); $("#cwsend").click(); }
+});
+$("#cwstop").onclick = () => { send("cw_macros_stop"); log("cw stop"); };
+$("#wpm").onchange = e => {
+  const v = Math.max(8, Math.min(50, +e.target.value || 20));
+  e.target.value = v; send(`cw_keyer_speed:${v},0`);
+};
+// remember the calls between sessions
+["mycall","hiscall"].forEach(id => {
+  const el = document.getElementById(id);
+  el.value = localStorage.getItem(id) || "";
+  el.oninput = () => localStorage.setItem(id, el.value.toUpperCase());
+});
+function paintCw(){
+  const cw = (S.mode === "CWL" || S.mode === "CWU");
+  $("#cwpanel").style.opacity = cw ? "1" : ".5";
+  $("#cwhint").textContent = cw ? "" : "(switch to CWL/CWU to send)";
+  $("#cwsend").disabled = !cw;
+  cwEl.querySelectorAll("button").forEach(b => b.disabled = !cw);
+}
+
+drawFreq(); paintPtt(); paintFilters(); paintCw(); connect();
+</script>
+</body>
+</html>

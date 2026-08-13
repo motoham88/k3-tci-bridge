@@ -1,0 +1,15 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Third-party client, NOT ours to redistribute.
+# TCI Remote is ON7OFF's proprietary app. Download it from the author:
+#   https://pure-editions.com/on7off/TCI-Remote/
+tciremote/
+
+# Local runtime
+*.log
+*.raw
+*.wav

@@ -17,6 +17,8 @@ Working CAT control **and bidirectional audio streaming**. See
 | `audio.py` | TCI binary frames, ALSA capture/playback, software volume |
 | `audiotest.py` | RX stream validation + TX audio ingest |
 | `voltest.py` | Software `volume` / `mute` verification |
+| `cwtest.py` | CW keying: speed, mode guard, chunking |
+| `chronotest.py` | TX_CHRONO pacing (start, rate, stop) |
 | `filtertest.py` | `rx_filter_band` across all mode classes |
 | `audiobench.py` | RX audio pipeline benchmark (used for the capability eval) |
 
@@ -105,12 +107,13 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - `rx_filter_band` get/set, mode-aware; re-reported on mode change
 - CW keying: `cw_msg` / `cw_macros` (chunked to KY's 24-char limit,
   buffer flow-controlled), `cw_keyer_speed`, `cw_macros_stop`
-- `drive` (power) and `tune`
+- `drive` (power), `tune`, `mic_level`
+- **TX_CHRONO pacing** — the clock that tells WSJT-X-style clients
+  when to send TX audio; measured at 46.90/s against a 46.88/s target
 
 ## Not yet implemented
 
-Browser microphone TX (needs HTTPS/WSS), RIT/XIT set, `tx_sensors`,
-TX_CHRONO pacing
+Browser microphone TX (needs HTTPS/WSS), RIT/XIT set, `tx_sensors`
 (built but not driven — needed only by clients like WSJT-X that wait to be
 asked for TX audio), IQ (deliberately never — no panadapter).
 
@@ -146,8 +149,15 @@ only symptom is that nothing happens.
    enables it automatically before keying, since a remote operator cannot
    reach the front panel.
 
-## A test-harness trap
+## Two test-harness traps
 
-`rx_smeter` broadcasts every 200 ms, so a "read until the socket goes quiet"
-loop never terminates. The test clients collect over a fixed window and
-filter `rx_smeter` instead. Any new test must do the same.
+**Never wait for the socket to go quiet.** `rx_smeter` broadcasts every
+200 ms and audio streams continuously, so a "read until silent" loop never
+terminates. Collect over a fixed window instead.
+
+**Client-side arrival times are not server-side send times.** TCP coalesces
+WebSocket frames, so measuring inter-arrival gaps shows bursts (near-zero
+gaps followed by long ones) that say nothing about the server's timing. Drain
+the socket before a measurement window, count over the window, and let the
+server log its own rate. Measuring the chrono clock this way made a
+correct 46.90/s clock look like 49.6/s.

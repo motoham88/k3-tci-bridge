@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import time
 from pathlib import Path
 
 from websockets.asyncio.server import serve
@@ -82,6 +83,7 @@ class Server:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.capture: audio.AudioCapture | None = None
         self.playback: audio.AudioPlayback | None = None
+        self.chrono_task: asyncio.Task | None = None
 
     # ---------- sending ----------
 
@@ -145,6 +147,56 @@ class Server:
         if self.playback:
             self.playback.stop()
             self.playback = None
+
+    # ---------- TX_CHRONO ----------
+
+    async def _chrono_loop(self, ws) -> None:
+        """Pace the client's TX audio.
+
+        TX_CHRONO is a clock, not data: a header-only frame that says "send
+        me the next block". Clients like WSJT-X wait to be asked rather than
+        streaming freely, so without this they key up and transmit silence.
+
+        One frame per 1024 stereo frames of audio = 21.33 ms at 48 kHz.
+        Timing accumulates against a fixed schedule rather than sleeping a
+        fixed interval, so scheduler jitter does not drift the clock.
+        """
+        period = (audio.FRAMES / 2) / audio.RATE
+        frame = audio.tx_chrono_frame()
+        next_t = t0 = time.perf_counter()
+        sent = 0
+        log.info("TX_CHRONO started (%d-sample frames every %.2f ms)",
+                 audio.FRAMES, period * 1000)
+        try:
+            while True:
+                await ws.send(frame)
+                sent += 1
+                next_t += period
+                delay = next_t - time.perf_counter()
+                if delay < -0.25:
+                    next_t = time.perf_counter()   # fell far behind; resync
+                    delay = 0.0
+                await asyncio.sleep(max(0.0, delay))
+        except (ConnectionClosed, asyncio.CancelledError):
+            pass
+        except Exception:
+            log.exception("TX_CHRONO loop failed")
+        finally:
+            el = time.perf_counter() - t0
+            log.info("TX_CHRONO stopped: %d frames in %.2f s = %.2f/s "
+                     "(target %.2f/s)", sent, el, sent / el if el else 0,
+                     1 / period)
+
+    def sync_chrono(self) -> None:
+        """Start or stop the chrono clock to match PTT state."""
+        b = self.bridge
+        want = bool(b.state.transmitting and b.ptt_wants_audio and b.ptt_owner)
+        if want and self.chrono_task is None:
+            self.chrono_task = asyncio.create_task(
+                self._chrono_loop(b.ptt_owner))
+        elif not want and self.chrono_task is not None:
+            self.chrono_task.cancel()
+            self.chrono_task = None
 
     def _handle_server_cmd(self, name: str, args: list[str],
                            raw: str, ws) -> list[str] | None:
@@ -210,6 +262,14 @@ class Server:
                     if srv is not None:
                         await self._send(ws, srv)
                         continue
+                    # Stop pacing the moment an unkey is asked for. The
+                    # bridge then spends up to 1.5 s confirming TQ0, and
+                    # chrono frames sent during that window arrive after
+                    # the client believes it has stopped transmitting.
+                    if name == "trx" and len(args) >= 2 and args[1] == "false":
+                        if self.chrono_task is not None:
+                            self.chrono_task.cancel()
+                            self.chrono_task = None
                     reply, notify = await asyncio.to_thread(
                         self.bridge.handle, part, ws)
                     await self._send(ws, reply)
@@ -217,6 +277,8 @@ class Server:
                     # that caused it -- that is what makes the broker
                     # authoritative rather than optimistic.
                     await self.broadcast(notify)
+                    if any(m.startswith("trx:") for m in notify):
+                        self.sync_chrono()
         except ConnectionClosed:
             pass
         finally:
@@ -229,6 +291,7 @@ class Server:
             msg = await asyncio.to_thread(self.bridge.release_client, ws)
             if msg:
                 await self.broadcast([msg])
+            self.sync_chrono()
             self._release_audio()
             if not self.clients:
                 await asyncio.to_thread(self.bridge.force_rx)
@@ -241,6 +304,7 @@ class Server:
             msg = await asyncio.to_thread(self.bridge.ptt_watchdog)
             if msg:
                 await self.broadcast([msg])
+                self.sync_chrono()
 
     async def smeter_task(self, period: float = 0.2) -> None:
         """S-meter poll. Suppressed during transmit: SM returns 0000 in TX

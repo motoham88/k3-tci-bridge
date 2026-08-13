@@ -90,6 +90,11 @@ class Bridge:
         self._current_client = None
         self._lock = threading.RLock()
 
+    @property
+    def ptt_owner(self):
+        """The client currently holding PTT, or None."""
+        return self._ptt_owner
+
     # ---------- startup ----------
 
     def prime(self) -> None:

@@ -146,6 +146,11 @@ Then open `http://<pi>:50001/`.
 
 ---
 
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). The Elecraft and TCI protocol documentation
+referenced here belongs to its respective authors and is not redistributed.
+
 ## Not implemented
 
 Browser microphone TX (needs HTTPS/WSS for a secure context), RIT/XIT set,

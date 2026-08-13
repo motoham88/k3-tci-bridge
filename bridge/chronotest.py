@@ -93,13 +93,20 @@ async def main():
         await drain(ws, 1.0)              # let it settle, discard the backlog
         window = 6.0
         t, rx = await gather(ws, window)
-        expect = window * 1000 / EXPECT_MS
-        rate = len(t) / window
-        print(f"  chrono frames {len(t)} in {window:.0f} s "
-              f"= {rate:.2f}/s (expect {expect/window:.2f}/s), rx audio {rx}")
-        if abs(rate - expect / window) > 4.0:
-            fails.append(f"rate {rate:.2f}/s is off "
-                         f"{expect/window:.2f}/s")
+        # Measure over the span of the frames actually seen, NOT the
+        # wall-clock window: the clock only starts once PTT is confirmed,
+        # which takes about a second, so part of the window has no chrono
+        # in it at all. Counting over the window under-reports the rate.
+        target = 1000 / EXPECT_MS
+        if len(t) < 3:
+            fails.append(f"only {len(t)} chrono frames seen")
+            rate = 0.0
+        else:
+            rate = (len(t) - 1) / (t[-1] - t[0])
+        print(f"  chrono frames {len(t)}, rate over their own span "
+              f"{rate:.2f}/s (expect {target:.2f}/s), rx audio {rx}")
+        if rate and abs(rate - target) > 2.0:
+            fails.append(f"rate {rate:.2f}/s is off {target:.2f}/s")
         if len(t) > 2:
             gaps = [(b - a) * 1000 for a, b in zip(t, t[1:])]
             print(f"  arrival gaps (batched by TCP, informational only): "

@@ -19,6 +19,8 @@ Working CAT control **and bidirectional audio streaming**. See
 | `voltest.py` | Software `volume` / `mute` verification |
 | `cwtest.py` | CW keying: speed, mode guard, chunking |
 | `chronotest.py` | TX_CHRONO pacing (start, rate, stop) |
+| `wsjtxmon.py` | Watches WSJT-X transmissions, checks FT8 slot timing |
+| `soak.py` | Long-run audio soak (hours), gap and drift detection |
 | `filtertest.py` | `rx_filter_band` across all mode classes |
 | `audiobench.py` | RX audio pipeline benchmark (used for the capability eval) |
 
@@ -110,6 +112,8 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - `drive` (power), `tune`, `mic_level`
 - **TX_CHRONO pacing** — the clock that tells WSJT-X-style clients
   when to send TX audio; measured at 46.90/s against a 46.88/s target
+- `tx_sensors` carrying the measured level of TX audio actually
+  received, so "keyed but sending nothing" is visible rather than silent
 
 ## Not yet implemented
 
@@ -154,6 +158,11 @@ only symptom is that nothing happens.
 **Never wait for the socket to go quiet.** `rx_smeter` broadcasts every
 200 ms and audio streams continuously, so a "read until silent" loop never
 terminates. Collect over a fixed window instead.
+
+**Measure over what you observed, not over the window you intended.** The
+chrono clock only starts once PTT is confirmed, about a second after the
+request, so counting frames across a fixed window under-reports the rate. A
+correct 46.9/s clock measured as 41/s that way.
 
 **Client-side arrival times are not server-side send times.** TCP coalesces
 WebSocket frames, so measuring inter-arrival gaps shows bursts (near-zero

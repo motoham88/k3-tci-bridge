@@ -84,6 +84,7 @@ class Server:
         self.capture: audio.AudioCapture | None = None
         self.playback: audio.AudioPlayback | None = None
         self.chrono_task: asyncio.Task | None = None
+        self.tx_stats: dict | None = None
 
     # ---------- sending ----------
 
@@ -192,11 +193,43 @@ class Server:
         b = self.bridge
         want = bool(b.state.transmitting and b.ptt_wants_audio and b.ptt_owner)
         if want and self.chrono_task is None:
+            self.tx_stats = {"blocks": 0, "samples": 0, "sumsq": 0.0,
+                             "peak": 0.0, "clipped": 0, "rate": 0, "fmt": -1,
+                             "t0": time.time()}
             self.chrono_task = asyncio.create_task(
                 self._chrono_loop(b.ptt_owner))
         elif not want and self.chrono_task is not None:
             self.chrono_task.cancel()
             self.chrono_task = None
+            self._report_tx_audio()
+
+    def _report_tx_audio(self) -> None:
+        """Summarise one transmission's TX audio, then reset."""
+        st, self.tx_stats = self.tx_stats, None
+        if not st:
+            return
+        dur = time.time() - st["t0"]
+        if not st["blocks"]:
+            log.warning("TX audio: NO frames received during a %.1f s "
+                        "transmission -- the client was asked for audio and "
+                        "sent none", dur)
+            return
+        rms = (st["sumsq"] / st["samples"]) ** 0.5 if st["samples"] else 0.0
+        secs = st["samples"] / 2 / audio.RATE          # stereo
+        import math
+        db = (lambda x: 20 * math.log10(x) if x > 1e-9 else -99.0)
+        log.info("TX audio: %d blocks, %.2f s of audio in %.2f s keyed "
+                 "(%.0f%%), rms %.1f dBFS, peak %.1f dBFS, clipped %d, "
+                 "rate %d, fmt %d, dropped %d",
+                 st["blocks"], secs, dur, 100 * secs / dur if dur else 0,
+                 db(rms), db(st["peak"]), st["clipped"], st["rate"],
+                 st["fmt"], self.playback.dropped if self.playback else -1)
+        if st["clipped"]:
+            log.warning("TX audio clipped on %d samples -- reduce the "
+                        "client's output level", st["clipped"])
+        if dur > 0.5 and secs / dur < 0.9:
+            log.warning("TX audio covered only %.0f%% of the keyed time -- "
+                        "gaps or underfeeding", 100 * secs / dur)
 
     def _handle_server_cmd(self, name: str, args: list[str],
                            raw: str, ws) -> list[str] | None:
@@ -233,8 +266,27 @@ class Server:
         if not self.playback:
             return
         pcm = audio.tx_payload_to_int16(hdr, data[audio.HEADER_BYTES:])
-        if pcm is not None:
-            self.playback.write(pcm)
+        if pcm is None:
+            return
+        self.playback.write(pcm)
+
+        # Accumulate per-transmission statistics. Level and clipping are the
+        # difference between "the client is sending audio" and "the client
+        # is sending audio we can actually transmit cleanly" -- for FT8 in
+        # particular, a clipped or overdriven signal still decodes locally
+        # but splatters on the air.
+        st = self.tx_stats
+        if st is not None:
+            f = pcm.astype("float32") / 32768.0
+            st["blocks"] += 1
+            st["samples"] += f.size
+            st["sumsq"] += float((f.astype("float64") ** 2).sum())
+            pk = float(abs(f).max()) if f.size else 0.0
+            if pk > st["peak"]:
+                st["peak"] = pk
+            st["clipped"] += int((abs(f) >= 0.999).sum())
+            st["rate"] = hdr["rate"]
+            st["fmt"] = hdr["format"]
 
     # ---------- client lifecycle ----------
 
@@ -270,6 +322,10 @@ class Server:
                         if self.chrono_task is not None:
                             self.chrono_task.cancel()
                             self.chrono_task = None
+                            # Must report here too. Skipping it leaves the
+                            # stats block populated, and tx_sensors then
+                            # broadcasts stale levels for ever afterwards.
+                            self._report_tx_audio()
                     reply, notify = await asyncio.to_thread(
                         self.bridge.handle, part, ws)
                     await self._send(ws, reply)
@@ -297,6 +353,32 @@ class Server:
                 await asyncio.to_thread(self.bridge.force_rx)
 
     # ---------- background tasks ----------
+
+    async def tx_sensor_task(self, period: float = 0.2) -> None:
+        """Report TX audio level while transmitting.
+
+        Only the mic field carries a real measurement: it is the level of
+        the audio we are actually receiving from the client and feeding to
+        the radio, which is what tells an operator their TX audio is
+        flowing. Forward power and SWR are left at zero -- reading them
+        needs CAT polling during transmit, and ALC would require switching
+        the front-panel meter mode out from under the operator.
+        """
+        while True:
+            await asyncio.sleep(period)
+            st = self.tx_stats
+            # Only while actually transmitting: a level readout when the
+            # radio is receiving is meaningless, and 5 Hz of zeros is just
+            # noise on the wire.
+            if not self.clients or st is None or not self.bridge.state.transmitting:
+                continue
+            n, sq = st["samples"], st["sumsq"]
+            if not n:
+                lvl = 0.0
+            else:
+                lvl = min(100.0, (sq / n) ** 0.5 * 100 * 3)   # ~0-100 scale
+            await self.broadcast(
+                [f"tx_sensors:0,{lvl:.1f},0.0,{st['peak']*100:.1f},0.0,0.0"])
 
     async def watchdog_task(self) -> None:
         while True:
@@ -345,7 +427,7 @@ class Server:
                      "<pi-address>" if self.host == "0.0.0.0" else self.host,
                      self.port)
             await asyncio.gather(self.watchdog_task(), self.reconcile_task(),
-                                 self.smeter_task())
+                                 self.smeter_task(), self.tx_sensor_task())
 
 
 async def amain(args) -> None:

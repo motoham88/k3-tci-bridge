@@ -52,7 +52,11 @@ button:disabled{opacity:.45; cursor:not-allowed}
 .steps{display:grid; grid-template-columns:repeat(5,1fr); gap:6px}
 
 /* meter */
-#meter{height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; position:relative}
+#meter,#txmeter{height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; position:relative}
+#txbar{height:100%; width:0; background:linear-gradient(90deg,var(--on),#c9d635 70%,var(--off));
+  transition:width .08s linear}
+#txpanel{opacity:.45; transition:opacity .15s}
+#txpanel.live{opacity:1}
 #bar{height:100%; width:0; background:linear-gradient(90deg,var(--on),#c9d635 62%,var(--off));
   transition:width .09s linear}
 #scale{display:flex; justify-content:space-between; color:var(--dim); font-size:10px;
@@ -161,6 +165,15 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
 </div>
 
+<div class="panel" id="txpanel">
+  <div class="row">
+    <span class="lbl">TX audio</span>
+    <span class="spacer"></span>
+    <span class="sub" id="txstat">idle</span>
+  </div>
+  <div id="txmeter"><div id="txbar"></div></div>
+</div>
+
 <button id="ptt">PTT — HOLD</button>
 
 <div class="panel"><div id="log"></div></div>
@@ -173,7 +186,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 // ws:// socket from an https:// page, and the bridge speaks ws://.
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
-            ready:false, flo:0, fhi:0 };
+            ready:false, flo:0, fhi:0, txLevel:0, txSeen:0 };
 const $ = s => document.querySelector(s);
 let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
 
@@ -226,6 +239,19 @@ function onText(msg){
       S.tx = args[1] === "true"; paintPtt(); break;
     case "rx_smeter":
       setMeter(+args[1]); break;
+    case "tx_sensors": {
+      // mic field is the level of the TX audio the bridge is actually
+      // receiving from a client and feeding to the radio. Zero while
+      // transmitting means the client is keying but sending nothing.
+      const lvl = +args[1] || 0, pk = +args[3] || 0;
+      $("#txbar").style.width = Math.max(0, Math.min(100, lvl)) + "%";
+      S.txLevel = lvl; S.txSeen = performance.now();
+      $("#txstat").textContent = S.tx
+        ? (lvl > 0.5 ? `${lvl.toFixed(0)}%  peak ${pk.toFixed(0)}%`
+                     : "KEYED BUT NO AUDIO")
+        : "idle";
+      break;
+    }
     case "drive":
       if (!isNaN(+args[1])) { $("#pwr").value = +args[1]; $("#pwrw").textContent = (+args[1]) + " W"; }
       break;
@@ -410,6 +436,11 @@ document.addEventListener("visibilitychange", () => { if (document.hidden && S.t
 function paintPtt(){
   ptt.classList.toggle("tx", S.tx);
   ptt.textContent = S.tx ? "● TRANSMITTING" : "PTT — HOLD";
+  $("#txpanel").classList.toggle("live", S.tx);
+  if (!S.tx){
+    $("#txbar").style.width = "0";
+    $("#txstat").textContent = "idle";
+  }
 }
 
 // ── CW ────────────────────────────────────────────────────────────────────

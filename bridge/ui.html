@@ -126,6 +126,11 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button id="tune">TUNE</button>
   </div>
   <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Mon</span>
+    <input type="range" id="mon" min="0" max="100" value="0">
+    <span class="sub" id="monv" style="min-width:3.5em;text-align:right">0</span>
+  </div>
+  <div class="row" style="margin-top:8px">
     <span class="lbl" style="min-width:3.2em">Vol</span>
     <input type="range" id="vol" min="-60" max="0" value="-10">
     <span class="sub" id="voldb" style="min-width:3.5em;text-align:right">−10 dB</span>
@@ -252,6 +257,10 @@ function onText(msg){
         : "idle";
       break;
     }
+    case "mon_volume":
+      if (!isNaN(+args[0])) { $("#mon").value = +args[0]; $("#monv").textContent = +args[0]; }
+      break;
+    case "mon_enable": break;
     case "drive":
       if (!isNaN(+args[1])) { $("#pwr").value = +args[1]; $("#pwrw").textContent = (+args[1]) + " W"; }
       break;
@@ -405,6 +414,10 @@ $("#audio").onclick = async () => {
     $("#astat").textContent = "off"; log("audio off");
   }
 };
+// Transmit monitor. If the radio routes MON to LINE OUT, raising this makes
+// your own transmitted audio audible in the RX stream during TX.
+$("#mon").oninput = e => { $("#monv").textContent = e.target.value; };
+$("#mon").onchange = e => send(`mon_volume:${e.target.value}`);
 $("#pwr").oninput = e => { $("#pwrw").textContent = e.target.value + " W"; };
 $("#pwr").onchange = e => send(`drive:0,${e.target.value}`);
 $("#tune").onclick = () => {

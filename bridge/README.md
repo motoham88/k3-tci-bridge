@@ -146,8 +146,12 @@ Both were found the hard way. Neither produces an error of any kind — the
 only symptom is that nothing happens.
 
 1. **`MIC+LIN` (menu 015) must be ON** for USB audio to reach the
-   transmitter. It means mic *plus* line summed; OFF removes LINE IN
-   entirely.
+   transmitter. It is the *enable* for LINE IN — with it OFF nothing
+   reaches the modulator at any mic gain. Do not switch it off to keep the
+   mic out of the TX path for digital modes: that just silences you. The
+   mic is unavoidably live, so the bridge mutes the transmit monitor on
+   entering a digital mode instead — otherwise monitor → speaker → mic →
+   transmitter → monitor howls.
 2. **CW VOX (`VX1`) must be on** for `KY` text to key the radio. Without it
    the K3 buffers the text and never transmits. The bridge now checks and
    enables it automatically before keying, since a remote operator cannot

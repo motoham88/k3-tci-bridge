@@ -44,6 +44,7 @@ class K3Cat:
         self._reader: threading.Thread | None = None
         # echo-loop guard: prefix -> expiry time
         self._recent_sets: dict[str, float] = {}
+        self.tx_test: bool | None = None
 
     # ---------- lifecycle ----------
 
@@ -51,12 +52,27 @@ class K3Cat:
         self._ser = serial.Serial(self.port, self.baud, timeout=0.1)
         time.sleep(0.2)
         self._ser.reset_input_buffer()
+
+        # Global rule 1: K3 extended mode on, K2 mode left at its K20 default.
+        self._ser.write(b"K31;")
+        self._ser.flush()
+        time.sleep(0.25)
+
+        # Read IC here, BEFORE the reader thread exists. Every IC byte has
+        # bit 7 set, and the reader is line-oriented and decodes as text, so
+        # it would replace those bytes and lose the flags. Doing it now also
+        # avoids racing the reader for the response.
+        self._ser.reset_input_buffer()
+        self._ser.write(b"IC;")
+        self._ser.flush()
+        time.sleep(0.35)
+        raw = self._ser.read(self._ser.in_waiting or 64)
+        self.tx_test = (bool(raw[2] & 0x20)
+                        if raw.startswith(b"IC") and len(raw) >= 8 else None)
+
         self._stop.clear()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
-        # Global rule 1: K3 extended mode on, K2 mode left at its K20 default.
-        self.send("K31")
-        time.sleep(0.2)
 
     def close(self) -> None:
         self._stop.set()
@@ -180,6 +196,13 @@ class K3Cat:
         info["has_subrx"] = len(data) > 3 and data[3] == "S"
         info["options"] = data
         return info
+
+    def tx_test_active(self) -> bool | None:
+        """Is the radio in TX TEST? True means transmissions produce NO RF.
+
+        Sampled once at open() -- see there for why it cannot be read later.
+        """
+        return self.tx_test
 
     def enable_auto_info(self) -> None:
         """AI2 covers most front-panel events, but the reference warns only a

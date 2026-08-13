@@ -441,6 +441,17 @@ async def amain(args) -> None:
         log.warning("unexpected ID response %r -- is the radio on?",
                     info["id"])
 
+    # Say plainly whether the radio will actually radiate. This is the one
+    # piece of state where being wrong is a licensing and hardware matter,
+    # and it is invisible over TCI -- there is no protocol field for it.
+    tt = cat.tx_test_active()
+    if tt is True:
+        log.warning("radio is in TX TEST: transmissions will produce NO RF")
+    elif tt is False:
+        log.warning("TX TEST is OFF: the radio WILL transmit for real")
+    else:
+        log.warning("could not determine TX TEST state")
+
     bridge = tci.Bridge(cat)
     bridge.prime()
     server = Server(bridge, args.host, args.port, args.alsa, args.no_audio)

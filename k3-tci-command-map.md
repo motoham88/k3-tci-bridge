@@ -623,10 +623,25 @@ instead:
 amixer -c 2 sset PCM 100%
 ```
 
-**Precondition 2 — `MIC+LIN` (menu 015) must be ON.** It means *mic plus
-line summed*; switching it OFF removes LINE IN from the TX path entirely.
-An earlier test turned it off trying to isolate the mic and thereby
-guaranteed its own failure.
+**Precondition 2 — `MIC+LIN` (menu 015) must be ON.** It is the *enable*
+for LINE IN, not a "sum the mic in" switch. Measured with the mixer at 100%
+and mic gain in the usable range, in DATA A:
+
+| `MIC+LIN` | silence | −6 dBFS tone |
+|---|---|---|
+| ON | 0 0 0 0 | 5 5 5 5 |
+| OFF | 0 0 0 0 | **0 0 0 0** |
+
+Nothing reaches the modulator with it off, at any mic gain. This is worth
+knowing because switching it off is the obvious way to keep the microphone
+out of the TX path for digital modes — and it does not work; it just
+silences you.
+
+**The microphone is therefore always live in the TX path**, which creates an
+acoustic feedback loop if the transmit monitor is up: monitor → speaker →
+mic → transmitter → monitor. It howls. Observed on the air. The bridge
+mutes the monitor (`ML000`) on entering a digital mode; the alternatives are
+to keep `MON` at zero manually or unplug the mic.
 
 **Cap `MG` at 030.** Above roughly MG034 the mic-path noise floor alone
 lifts the ALC — the silence column above shows it starting at 034. For a

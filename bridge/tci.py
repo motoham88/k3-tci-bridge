@@ -69,6 +69,7 @@ class RadioState:
         # to the audio frames -- see audio.rx_frame.
         self.volume_db = 0
         self.muted = False
+        self.mon_level = 0
 
 
 class Bridge:
@@ -210,6 +211,7 @@ class Bridge:
             f"trx:0,{bool_str(s.transmitting)}",
             f"drive:0,{self._read_pc()}",
             f"mic_level:{self._read_mic()}",
+            f"mon_volume:{self._read_mon()}",
             f"volume:{s.volume_db}",
             f"mute:0,{bool_str(s.muted)}",
             "ready",
@@ -290,6 +292,19 @@ class Bridge:
                 self.cat.set_verified(dt, "DT", dt + ";")
             self.cat.set_verified(md, "MD", md + ";")
             self.refresh_mode()
+            # Entering a digital mode: silence the transmit monitor.
+            #
+            # MIC+LIN must stay ON -- it is the enable for LINE IN, not a
+            # "sum the mic in" switch; with it OFF nothing reaches the
+            # modulator at all (measured). So the microphone is unavoidably
+            # live in the TX path, and if the monitor is up it feeds the
+            # speaker, which feeds the mic, which feeds the transmitter.
+            # That howls. Dropping the monitor breaks the loop and costs
+            # nothing in a mode nobody listens to themselves in.
+            if self.state.mode in ("digu", "digl") and self._read_mon() > 0:
+                log.info("digital mode: muting the TX monitor to prevent "
+                         "acoustic feedback through the mic")
+                self.cat.set_verified("ML000", "ML", "ML000;")
             # Filters are stored per mode, so the passband just changed too.
             self.refresh_filter()
             s = self.state
@@ -400,6 +415,51 @@ class Bridge:
 
     def _cmd_if_limits(self, args):
         return [f"if_limits:{IF_LIMITS[0]},{IF_LIMITS[1]}"], []
+
+    # -- transmit monitor -------------------------------------------------
+
+    # ML is 000-060 and applies to the CURRENT mode -- CW sidetone, voice or
+    # data are stored separately, so a level set in CW does not carry into
+    # SSB. That is the radio's behaviour, not something to paper over.
+    ML_MAX = 60
+
+    def _cmd_mon_volume(self, args):
+        """TCI mon_volume 0-100 -> ML. Other TCI servers put the value in
+        args[0] for this command rather than args[1], so accept either."""
+        if args and args[0] != "":
+            try:
+                pct = int(float(args[0] if len(args) == 1 else args[-1]))
+            except ValueError:
+                return [], []
+            pct = max(0, min(100, pct))
+            ml = round(pct * self.ML_MAX / 100)
+            self.cat.set_verified(f"ML{ml:03d}", "ML", f"ML{ml:03d};")
+            self.state.mon_level = pct
+            return [], [f"mon_volume:{pct}"]
+        return [f"mon_volume:{self._read_mon()}"], []
+
+    def _read_mon(self) -> int:
+        r = self.cat.ask("ML")
+        if r and r.startswith("ML") and len(r) >= 6:
+            try:
+                return round(int(r[2:5]) * 100 / self.ML_MAX)
+            except ValueError:
+                pass
+        return 0
+
+    def _cmd_mon_enable(self, args):
+        """No on/off command exists -- ML000 is off. Cache the level so it
+        can be restored rather than lost."""
+        if len(args) >= 2 or (args and args[0] in ("true", "false")):
+            on = ("true" in [a.lower() for a in args])
+            if on:
+                lvl = self.state.mon_level or 30
+                self._cmd_mon_volume([str(lvl)])
+            else:
+                self.state.mon_level = self._read_mon()
+                self.cat.set_verified("ML000", "ML", "ML000;")
+            return [], [f"mon_enable:{bool_str(on)}"]
+        return [f"mon_enable:{bool_str(self._read_mon() > 0)}"], []
 
     # -- mic gain ---------------------------------------------------------
 

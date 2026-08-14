@@ -418,6 +418,11 @@ function onAudio(buf){
   if (h[6] !== 1) return;                       // ignore IQ / TX_CHRONO
   const pcm = new Float32Array(buf, 64);
   const n = pcm.length >> 1;
+  // 48000 is the rate of the DATA, not of the context, and is deliberately
+  // not ctx.sampleRate. An AudioBuffer carries its own rate and the browser
+  // resamples on playback when the two differ. Passing ctx.sampleRate would
+  // relabel 48 kHz samples as whatever the hardware happens to run at and
+  // play them at the wrong pitch.
   const ab = ctx.createBuffer(2, n, 48000);
   const L = ab.getChannelData(0), R = ab.getChannelData(1);
   for (let i = 0; i < n; i++){ L[i] = pcm[2*i]; R[i] = pcm[2*i+1]; }
@@ -431,9 +436,23 @@ function onAudio(buf){
   nextT += ab.duration;
   frames++; lastFrame = performance.now();
 }
+// 48 kHz asked for up front so the context matches the TCI wire rate and
+// nothing has to resample. A browser is free to refuse the hint and throw;
+// take whatever rate it will give us rather than losing audio altogether.
+function makeCtx(){
+  const AC = window.AudioContext || window.webkitAudioContext;
+  try { return new AC({sampleRate:48000}); }
+  catch (e){ log("48 kHz refused — using the default rate"); return new AC(); }
+}
 $("#audio").onclick = async () => {
   if (!S.audio){
-    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)({sampleRate:48000});
+    // iOS puts a bare AudioContext in the "ambient" audio session category,
+    // and ambient is exactly what the ring/silent switch mutes. The failure
+    // is invisible from in here: frames arrive, get scheduled, and play into
+    // nothing. "playback" is the category streaming apps use and ignores the
+    // switch. Safari 16.4+; absent elsewhere, so guard it.
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+    ctx = ctx || makeCtx();
     await ctx.resume();                          // needs a user gesture
     if (!gain){ gain = ctx.createGain(); gain.connect(ctx.destination); }
     gain.gain.value = 1;

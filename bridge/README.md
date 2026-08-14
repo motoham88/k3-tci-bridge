@@ -44,6 +44,16 @@ usable for tune and CW, but voice from the browser needs the UI served over
 HTTPS with the socket upgraded to `wss://`. The phone app does not have this
 restriction.
 
+**iPhone: audio is silent with the ring/silent switch set to silent.** iOS
+puts a bare `AudioContext` in the *ambient* audio session category, and
+ambient is the category that switch governs — so on a muted phone the socket
+connects, every control works, frames arrive and get scheduled, and nothing
+comes out. Media elements ignore the switch; Web Audio does not. Affects
+every iOS browser, since they are all WebKit. The UI now sets
+`navigator.audioSession.type = "playback"` (Safari 16.4+) on audio start,
+which is the category streaming apps use and is not muted by the switch. On
+older iOS the switch still wins — flip it off silent.
+
 ## Running
 
 Normal way — as a service:
@@ -133,7 +143,7 @@ Browser microphone TX (needs HTTPS/WSS), RIT/XIT set, `tx_sensors`
 (built but not driven — needed only by clients like WSJT-X that wait to be
 asked for TX audio), IQ (deliberately never — no panadapter).
 
-## Five things not to "fix"
+## Six things not to "fix"
 
 1. **`cwl` → `MD3`, `cwu` → `MD7`.** Plain "CW" on this radio is the *lower*
    sideband. Measured against a WWV carrier, not assumed. It looks like a
@@ -151,6 +161,12 @@ asked for TX audio), IQ (deliberately never — no panadapter).
    (menu 032), which is a one-time calibration, not a volume slider.
 5. **Header `length` is samples, not frames.** Stereo means `frames * 2`.
    Getting it wrong makes clients play at half speed.
+6. **`ctx.createBuffer(2, n, 48000)` in the web UI hardcodes 48000 on
+   purpose.** That argument is the rate of the *data*, not of the context.
+   An `AudioBuffer` carries its own rate and the browser resamples on
+   playback when the two differ, which is correct. "Tidying" it to
+   `ctx.sampleRate` relabels 48 kHz samples as whatever the hardware runs
+   at and plays them at the wrong pitch.
 
 ## Two radio settings that fail silently
 

@@ -753,9 +753,11 @@ Sideband polarity for CW and DATA is **settled** — see above. Remaining:
 4. **`AG` volume taper.** The amplitude-linear dB→`AG` formula is a
    starting point, not a documented curve.
 
-5. **`FR0;` vs `FT0;` for split cancel.** The reference contradicts itself
-   (command description says `FR`, sample macro uses `FT`). Confirm via
-   `IF;` field `p` which one actually clears it.
+5. **Split.** Clearing works; *enabling* does not — `FT1;` is sent and
+   `IF` field `p` still reads 0. Unresolved, and deliberately not pursued:
+   nothing in use here needs split. The original question also stands, that
+   the reference contradicts itself on cancel (command description says
+   `FR0;`, sample macro uses `FT0;`).
 
 6. **`rx_filter_band` round-trip in each mode.** Set a band, read back
    `BW;`/`IS;`, confirm the reported passband matches what the client drew —

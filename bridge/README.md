@@ -115,6 +115,18 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - `tx_sensors` carrying the measured level of TX audio actually
   received, so "keyed but sending nothing" is visible rather than silent
 
+## Known limitation: enabling split
+
+`split_enable:0,true` does not take. The command reaches the bridge, the
+bridge sends `FT1;`, and the radio's `IF` response still reports split off.
+Cause not established — `FT1` may be returning `?;` on a path that does not
+check for it, or split may be unavailable in the mode being used.
+
+Reading split works correctly, and clearing it works, so WSJT-X (which only
+ever sends `split_enable:false`) is unaffected. Not pursued because nothing
+in use here needs split. If you need it, start by checking whether `FT1;`
+returns `?;` with the service stopped.
+
 ## Not yet implemented
 
 Browser microphone TX (needs HTTPS/WSS), RIT/XIT set, `tx_sensors`

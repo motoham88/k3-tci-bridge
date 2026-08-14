@@ -70,6 +70,7 @@ class RadioState:
         self.volume_db = 0
         self.muted = False
         self.mon_level = 0
+        self.tm_mode = 0            # 0 = RF power on the bargraph, 1 = ALC
 
 
 class Bridge:
@@ -104,6 +105,7 @@ class Bridge:
         self.refresh_mode()
         self.refresh_if()
         self.refresh_filter()
+        self.refresh_tm()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -365,6 +367,18 @@ class Bridge:
                     self.ptt_wants_audio = False
                 self.state.transmitting = ok
             else:
+                # An unkey from a client that does not hold PTT is allowed
+                # -- it is a useful emergency stop from anywhere -- but it
+                # is worth shouting about, because it is also how one
+                # client accidentally cuts another's transmission short.
+                # A web UI once did exactly that on a stray mouse-leave,
+                # and finding it meant reading peer port numbers.
+                if (self._ptt_owner is not None
+                        and self._current_client is not None
+                        and self._current_client is not self._ptt_owner):
+                    log.warning("unkey from a client that does NOT hold PTT "
+                                "-- cutting short another client's "
+                                "transmission")
                 self.cat.send("RX")
                 if not self._await_tq(False):
                     # Retry once, then leave the watchdog ARMED. Clearing the
@@ -697,6 +711,48 @@ class Bridge:
     def _cmd_dds(self, args):
         # No panadapter; report the VFO so clients have a sane centre.
         return [f"dds:0,{self.state.vfo_a}"], []
+
+    # ---------- transmit metering ----------
+
+    def refresh_tm(self) -> None:
+        """Which quantity the bargraph is reporting.
+
+        BG returns bars whose meaning depends on the METER setting: 00-12
+        for RF power under TM0, 00-07 for ALC under TM1. Reporting one as
+        the other would be worse than reporting nothing, so read it rather
+        than assume. TM is K3/K3S only.
+        """
+        r = self.cat.ask("TM")
+        if r and r.startswith("TM") and len(r) >= 4 and r[2].isdigit():
+            self.tm_mode = int(r[2])
+
+    def read_tx_meters(self) -> tuple[int | None, int | None, float | None]:
+        """(alc, fwd_bars, swr) during transmit.
+
+        The reference warns against polling faster than ~100 ms and against
+        polling during transmit at all unless necessary -- this is the one
+        place it is necessary, so it runs at 5 Hz and only while keyed.
+        """
+        alc = fwd = swr = None
+        r = self.cat.ask("BG")
+        if r and r.startswith("BG") and len(r) >= 5:
+            try:
+                bars, flag = int(r[2:4]), r[4]
+            except ValueError:
+                bars = flag = None
+            # An 'R' reading is the S-meter, not transmit metering.
+            if flag == "T" and bars is not None:
+                if self.tm_mode == 1:
+                    alc = bars                 # 00-07
+                else:
+                    fwd = bars                 # 00-12
+        w = self.cat.ask("SW")
+        if w and w.startswith("SW") and len(w) >= 6:
+            try:
+                swr = int(w[2:5]) / 10.0       # tenths, 1.0-99.9
+            except ValueError:
+                pass
+        return alc, fwd, swr
 
     # ---------- audio gain ----------
 

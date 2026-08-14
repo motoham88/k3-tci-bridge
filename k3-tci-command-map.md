@@ -323,6 +323,17 @@ since it requires far fewer bytes than an IF response."*
 KEY OUT for downstream amplifiers and transverters. Fine for driving the PTT
 watchdog; don't report it to the client as confirmed power output.
 
+**Do not poll `BG` or `SW` during transmit.** Reading ALC at 5 Hz — two
+commands per 200 ms — made the K3 drop out of transmit after a few seconds.
+That is exactly the case the reference warns about: *"Continuous, fast
+polling (< 100 ms per poll for bar graph data in transmit mode, for example)
+should be carefully tested"* and *"Polling during transmit not be used
+unless necessary."* Tried, confirmed harmful, removed. **ALC is therefore
+not readable remotely on this radio**; the target on a K3 is around 4-5
+bars, read at the front panel. (`TM1` is also required for `BG` to mean ALC
+at all — under `TM0` it is RF power on a different scale, and mistaking one
+for the other reads as full-scale nonsense.)
+
 **PTT watchdog** (per the design doc's open question): the timer must fire
 `RX;` on client disconnect *and* on a stale connection. `TX;`/`RX;` are the
 only commands where a dropped WebSocket leaves the radio in a physically

@@ -169,6 +169,21 @@ only symptom is that nothing happens.
    enables it automatically before keying, since a remote operator cannot
    reach the front panel.
 
+## A multi-client trap the tests could not catch
+
+The bridge broadcasts state to every client, so `trx:0,true` means *the
+radio* is transmitting — not *this client* is transmitting. A web UI that
+released PTT on `S.tx` therefore cut short transmissions started by other
+clients: a stray `pointerleave` on the PTT button, or a tab switch, sent
+`trx:0,false` and dropped WSJT-X mid-transmission from another machine.
+
+Only ever release a transmission you started. `multiclient.py` verifies
+that state *reaches* both clients; it cannot verify that an idle client
+*refrains from acting* on it, which is where this lived. The server now
+logs a warning when an unkey arrives from a client that does not hold PTT —
+it is still permitted, since an emergency stop from anywhere is worth
+having, but it should never happen silently.
+
 ## Two test-harness traps
 
 **Never wait for the socket to go quiet.** `rx_smeter` broadcasts every

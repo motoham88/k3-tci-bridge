@@ -378,6 +378,16 @@ class Server:
                 lvl = 0.0
             else:
                 lvl = min(100.0, (sq / n) ** 0.5 * 100 * 3)   # ~0-100 scale
+            # NO CAT POLLING HERE. Reading BG/SW during transmit at 5 Hz
+            # made the radio drop out of TX after a few seconds -- exactly
+            # what the programmer's reference warns about: "Polling during
+            # transmit not be used unless necessary", and "< 100 ms per
+            # poll for bar graph data in transmit mode ... should be
+            # carefully tested to ensure that it isn't affecting radio
+            # operation". Two commands per 200 ms is that spacing.
+            #
+            # Only the audio level is reported, which costs no CAT traffic
+            # because it is measured from the frames the client sends us.
             await self.broadcast(
                 [f"tx_sensors:0,{lvl:.1f},0.0,{st['peak']*100:.1f},0.0,0.0"])
 

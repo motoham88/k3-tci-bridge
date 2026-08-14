@@ -55,6 +55,15 @@ button:disabled{opacity:.45; cursor:not-allowed}
 #meter,#txmeter{height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; position:relative}
 #txbar{height:100%; width:0; background:linear-gradient(90deg,var(--on),#c9d635 70%,var(--off));
   transition:width .08s linear}
+#alcmeter{height:16px; background:var(--panel2); border-radius:5px; overflow:hidden}
+/* The K3 is not a radio where any ALC is bad. Elecraft designs its ALC as
+   a levelling control with a TARGET range -- around 4-5 of the 7 segments
+   is correct drive, not overdrive. Under-driving reads as a warning here
+   just as over-driving does. */
+#alcbar{height:100%; width:0; transition:width .08s linear; background:var(--on)}
+#alcbar.low{background:var(--accent)} #alcbar.hot{background:var(--off)}
+#alcscale{display:flex; justify-content:space-between; color:var(--dim);
+  font-size:10px; font-family:var(--mono); margin-top:3px}
 #txpanel{opacity:.45; transition:opacity .15s}
 #txpanel.live{opacity:1}
 #bar{height:100%; width:0; background:linear-gradient(90deg,var(--on),#c9d635 62%,var(--off));
@@ -177,6 +186,17 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <span class="sub" id="txstat">idle</span>
   </div>
   <div id="txmeter"><div id="txbar"></div></div>
+  <div class="row" style="margin-top:10px">
+    <span class="lbl">ALC</span>
+    <span class="spacer"></span>
+    <span class="sub" id="alcval">—</span>
+  </div>
+  <div id="alcmeter"><div id="alcbar"></div></div>
+  <div id="alcscale">
+    <span>0</span><span>1</span><span>2</span><span>3</span>
+    <span>4</span><span>5</span><span>6</span><span>7</span>
+  </div>
+  <div class="sub" id="alchint" style="margin-top:6px"></div>
 </div>
 
 <button id="ptt">PTT — HOLD</button>
@@ -249,6 +269,19 @@ function onText(msg){
       // receiving from a client and feeding to the radio. Zero while
       // transmitting means the client is keying but sending nothing.
       const lvl = +args[1] || 0, pk = +args[3] || 0;
+      const swr = +args[4] || 0, alc = +args[5] || 0;
+      // ALC is 0-7 on the K3 and only meaningful with METER on CMP/ALC.
+      const bar = $("#alcbar");
+      bar.style.width = Math.max(0, Math.min(100, alc / 7 * 100)) + "%";
+      bar.className = alc >= 7 ? "hot" : alc <= 2 ? "low" : "";
+      // ALC is not reported: polling the radio for it during transmit
+      // made the K3 drop out of TX. Left in place, showing why.
+      $("#alcval").textContent = S.tx ? "read it on the radio" : "—";
+      // Target for the K3 is roughly 4-5 of 7 -- its ALC levels rather
+      // than merely limits, so too little is as wrong as too much.
+      $("#alchint").textContent = !S.tx ? ""
+        : "ALC unavailable remotely — polling it during TX drops the "
+          + "transmitter. Target on the K3 is about 4-5 bars.";
       $("#txbar").style.width = Math.max(0, Math.min(100, lvl)) + "%";
       S.txLevel = lvl; S.txSeen = performance.now();
       $("#txstat").textContent = S.tx
@@ -441,18 +474,32 @@ setInterval(() => {
 // bridge has a watchdog, but the UI should never be the reason it is needed.
 const ptt = $("#ptt");
 const key = on => send(`trx:0,${on ? "true" : "false"}`);
-ptt.addEventListener("pointerdown", e => { e.preventDefault(); key(true); });
-["pointerup","pointercancel","pointerleave"].forEach(ev =>
-  ptt.addEventListener(ev, () => key(false)));
-window.addEventListener("blur", () => { if (S.tx) key(false); });
-document.addEventListener("visibilitychange", () => { if (document.hidden && S.tx) key(false); });
+
+// Only ever unkey a transmission WE started.
+//
+// S.tx means "the radio is transmitting", not "this page is transmitting" --
+// the bridge broadcasts state to every client, so S.tx goes true when
+// anything keys, including WSJT-X on another machine. Releasing on S.tx cut
+// other clients' transmissions short: a tab switch, or even the mouse
+// leaving the PTT button, sent trx:0,false and dropped someone else's TX
+// mid-over. pointerleave in particular fires with no button pressed at all.
+let myPtt = false;
+const release = () => { if (myPtt) { myPtt = false; key(false); } };
+ptt.addEventListener("pointerdown", e => { e.preventDefault(); myPtt = true; key(true); });
+["pointerup", "pointercancel", "pointerleave"].forEach(ev =>
+  ptt.addEventListener(ev, release));
+window.addEventListener("blur", release);
+document.addEventListener("visibilitychange", () => { if (document.hidden) release(); });
 function paintPtt(){
   ptt.classList.toggle("tx", S.tx);
   ptt.textContent = S.tx ? "● TRANSMITTING" : "PTT — HOLD";
   $("#txpanel").classList.toggle("live", S.tx);
   if (!S.tx){
     $("#txbar").style.width = "0";
+    $("#alcbar").style.width = "0";
     $("#txstat").textContent = "idle";
+    $("#alcval").textContent = "—";
+    $("#alchint").textContent = "";
   }
 }
 

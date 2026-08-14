@@ -145,6 +145,15 @@ Then open `http://<pi>:50001/`.
 
 - The built-in **web UI** — nothing to install, works on a phone on the LAN.
   This is the primary client.
+
+  On iPhone, audio used to be silent whenever the ring/silent switch was set
+  to silent: iOS puts a bare `AudioContext` in the *ambient* audio session
+  category, which that switch mutes. Everything else worked, which made it
+  look like an audio-path fault rather than a phone setting. Fixed by
+  requesting the `playback` category. If a browser fault ever looks like a
+  transport problem, note that HTTPS upgrading and iOS Local Network
+  permission are both dead ends — see [`bridge/README.md`](bridge/README.md)
+  for why.
 - **WSJT-X 3.0.1** — set the rig to the TCI/ExpertSDR option pointed at
   `<pi>:50001`, tick *Use TCI Audio*, and put the radio in DIGU. Confirmed
   working. Needs the TX_CHRONO clock, which is why it exists here.

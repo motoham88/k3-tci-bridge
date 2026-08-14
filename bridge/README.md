@@ -49,10 +49,15 @@ puts a bare `AudioContext` in the *ambient* audio session category, and
 ambient is the category that switch governs — so on a muted phone the socket
 connects, every control works, frames arrive and get scheduled, and nothing
 comes out. Media elements ignore the switch; Web Audio does not. Affects
-every iOS browser, since they are all WebKit. The UI now sets
-`navigator.audioSession.type = "playback"` (Safari 16.4+) on audio start,
-which is the category streaming apps use and is not muted by the switch. On
-older iOS the switch still wins — flip it off silent.
+every iOS browser, since they are all WebKit — Safari and DuckDuckGo failed
+identically, which is what ruled out any one browser's policy.
+
+Fixed by setting `navigator.audioSession.type = "playback"` on audio start,
+the category streaming apps use, which the switch does not mute. Confirmed
+on iOS 26.6: audio plays with the switch still set to silent, and that alone
+was enough — the silent-looping-`<audio>` workaround was not needed. The
+property arrived in Safari 16.4 and the call is guarded, so on anything
+older the switch still wins and the only remedy is to flip it off silent.
 
 ## Running
 

@@ -387,6 +387,11 @@ class Bridge:
     # -- split ------------------------------------------------------------
 
     def _cmd_split_enable(self, args):
+        # WSJT-X sends "split_enable:false" with NO trx index. Requiring
+        # two arguments silently ignored it, so the radio kept whatever
+        # split state it had while the client believed it had cleared it.
+        if len(args) == 1 and args[0] in ("true", "false"):
+            args = ["0", args[0]]
         if len(args) >= 2 and args[1] in ("true", "false"):
             # FT1 enables split (TX on B); FR0 is the documented cancel.
             self.cat.send("FT1" if args[1] == "true" else "FR0")
@@ -668,6 +673,17 @@ class Bridge:
             return [], [f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
         s = self.state
         return [f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"], []
+
+    def _cmd_rx_sensors_enable(self, args):
+        """WSJT-X sends "rx_sensors_enable:false,500" on connect. We do not
+        stream rx_channel_sensors, so just acknowledge -- an unanswered
+        command can leave a client waiting."""
+        on = bool(args) and args[0].lower() == "true"
+        return [f"rx_sensors_enable:{bool_str(on)}"], []
+
+    def _cmd_tx_sensors_enable(self, args):
+        on = bool(args) and args[0].lower() == "true"
+        return [f"tx_sensors_enable:{bool_str(on)}"], []
 
     def _cmd_tx_profiles_ex(self, args):
         # TCI Remote queries this right after connecting. The K3 has no TX

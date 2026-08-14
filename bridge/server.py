@@ -306,6 +306,7 @@ class Server:
                     part = part.strip()
                     if not part:
                         continue
+                    log.debug("< %s  [%s]", part, peer)
                     name, _, argstr = part.partition(":")
                     name = name.strip().lower()
                     args = [a.strip() for a in argstr.split(",")] if argstr \
@@ -489,6 +490,10 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)-7s %(message)s",
         datefmt="%H:%M:%S")
+    # Our own DEBUG is useful; the websockets library's is not -- at DEBUG
+    # it logs every frame, and audio alone is 23/s plus chrono at 47/s,
+    # which buries the commands we actually want to read.
+    logging.getLogger("websockets").setLevel(logging.INFO)
     try:
         asyncio.run(amain(args))
     except KeyboardInterrupt:

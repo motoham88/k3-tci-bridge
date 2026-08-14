@@ -650,6 +650,37 @@ full ALC is reached at MG as low as 005 with the mixer at 100%, the whole
 useful control range sits below 030, which is why the `mic_level` row maps
 to 0–30 rather than the full 0–60 the command accepts.
 
+### What WSJT-X actually sends
+
+Captured from WSJT-X 3.0.1 over TCI, in order, on connect and on Tune:
+
+```
+split_enable:false          <- NO trx index. See below.
+audio_start:0
+rx_sensors_enable:false,500
+tx_sensors_enable:false,500
+trx:0,true,tci              <- keys, naming "tci" as the audio source
+trx:0,false,tci
+```
+
+**`split_enable:false` arrives with no trx index.** A handler that requires
+two arguments ignores it silently, and the radio keeps whatever split state
+it had while the client believes it has cleared it. Accept both the
+`split_enable:<bool>` and `split_enable:<trx>,<bool>` forms.
+
+**It reconnects on its own** about two seconds after a server restart, so
+restarting the bridge is not disruptive to it.
+
+**Measured TX audio, one Tune:** 2057 blocks against 2057 chrono requests
+over 43.87 s — exact lockstep, 100% coverage, zero dropped, zero clipped,
+48 kHz float32. The chrono clock ran at 46.89/s against a 46.88/s target.
+
+Note its output sits at **digital full scale** (peak 0.0 dBFS, rms −3.1),
+which leaves no headroom in the float32→int16 conversion. Scale it down at
+the source with WSJT-X's own Pwr slider rather than only reducing `MG`:
+lowering mic gain fixes the transmitter's drive but leaves the digital
+signal clipping-adjacent.
+
 ### Sideband polarity — measured, not assumed
 
 Method: WWV radiates a continuous carrier on exact MHz boundaries. Tune the

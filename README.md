@@ -38,7 +38,7 @@ repeats that investigation.
 | [`k3-tci-command-map.md`](k3-tci-command-map.md) | **The reference.** Byte-exact TCI ↔ K3 CAT mapping, global rules, everything verified on hardware |
 | [`k3-tci-capability-eval.md`](k3-tci-capability-eval.md) | Measured performance envelope, risks, config |
 | [`bridge/`](bridge/) | The bridge itself, the web UI, and its test suite |
-| [`tools/`](tools/) | Bench scripts used to establish the findings |
+| [`tools/`](tools/) | Bench scripts used to establish the findings — see [`tools/README.md`](tools/README.md) |
 
 ---
 

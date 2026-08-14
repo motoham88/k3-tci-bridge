@@ -59,6 +59,18 @@ was enough — the silent-looping-`<audio>` workaround was not needed. The
 property arrived in Safari 16.4 and the call is guarded, so on anything
 older the switch still wins and the only remedy is to flip it off silent.
 
+**A dead end worth recording: privacy browsers' HTTPS upgrading is not a
+problem here.** DuckDuckGo upgrades `http://` to `https://` by default,
+which looks like an obvious way to break a plain-http LAN UI — a page forced
+to `https://` cannot open a `ws://` socket at all. It was the first suspect
+and it was wrong: DuckDuckGo on iOS loads
+`http://192.168.1.198:50001/` without complaint and the socket connects, so
+private IPs are evidently exempt from the upgrade. iOS Local Network
+permission is a similar dead end — it gates the app reaching `192.168.x.x`
+at all, so if the page renders and the controls work, it has already been
+granted. Neither is worth re-investigating: if the UI loads and responds,
+the transport is fine and the fault is further in.
+
 ## Running
 
 Normal way — as a service:

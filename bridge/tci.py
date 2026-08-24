@@ -49,6 +49,19 @@ def bool_str(v: bool) -> str:
     return "true" if v else "false"
 
 
+def ro_command(hz: int) -> str:
+    """RIT/XIT offset -> `RO<sign><4 digits>`.
+
+    One register, shared by RIT and XIT (see `_cmd_rit_offset`). The sign
+    character is independent of the magnitude -- the radio itself emits
+    `RO-0000` -- so it is written unconditionally rather than omitted at zero.
+    Clamped to the +/-9999 the register holds and that `if_limits` advertises;
+    the K3 would clamp anyway and echo back a value nobody asked for.
+    """
+    hz = max(-9999, min(9999, int(hz)))
+    return f"RO{'-' if hz < 0 else '+'}{abs(hz):04d}"
+
+
 class RadioState:
     """Cache of everything the bridge advertises, so clients can be answered
     without hitting the serial port for every query."""
@@ -162,11 +175,35 @@ class Bridge:
             lo, hi = -half, half
         self.state.filter_lo, self.state.filter_hi = lo, hi
 
+    # Highest fixed offset this parser reads (`split`, at index 32). The
+    # length guard below is expressed in terms of it rather than the overall
+    # response length -- see refresh_if.
+    IF_LAST_FIELD = 32
+
     def refresh_if(self) -> None:
-        """IF is 38 chars with every field at a fixed offset -- verified on
-        the bench. One read gives TX state, mode, split and RIT/XIT."""
+        """One read gives TX state, mode, split and RIT/XIT, each at a fixed
+        offset.
+
+        LENGTH: the reference sample in the command map is 38 characters and
+        ends `...0003000011 ;` -- a space before the terminator. This radio
+        (K3, RVM05.67) returns 37 and ends `...0003000001;` with no space, so
+        a `len(r) < 38` guard rejected EVERY reply and this function returned
+        without ever updating anything. Nothing looked broken from outside:
+        frequency and mode track through the AI2 unsolicited stream instead,
+        so only the fields that have no AI2 path -- split, and now RIT/XIT --
+        were silently frozen at whatever they were at startup.
+
+        So the guard asks the question that actually matters: is the response
+        long enough to contain the fields being read? Every field sits at
+        index 32 or below, which both the 37- and 38-character forms satisfy.
+        """
         r = self.cat.ask("IF", timeout=0.8)
-        if not r or not r.startswith("IF") or len(r) < 38:
+        if not r or not r.startswith("IF") or len(r) <= self.IF_LAST_FIELD:
+            # SAY SO. This returned silently, which made every caller's
+            # read-back indistinguishable from a confirmed one: the cached
+            # state is re-broadcast as though the radio had accepted the SET.
+            # `?;` from a busy radio (global rule 3) lands here.
+            log.debug("refresh_if: no usable IF reply (%r) -- state left stale", r)
             return
         s = self.state
         try:
@@ -210,6 +247,11 @@ class Bridge:
             f"rit_enable:0,{bool_str(s.rit_on)}",
             f"xit_enable:0,{bool_str(s.xit_on)}",
             f"rit_offset:0,{s.rit_offset}",
+            # Both, from the one shared RO register. Without this a client
+            # that models the two offsets separately starts with its XIT
+            # readout at 0 while the radio is shifted -- and every SET after
+            # that reports both, so only the initial state was ever wrong.
+            f"xit_offset:0,{s.rit_offset}",
             f"trx:0,{bool_str(s.transmitting)}",
             f"drive:0,{self._read_pc()}",
             f"mic_level:{self._read_mic()}",
@@ -413,6 +455,95 @@ class Bridge:
             self.refresh_if()
             return [], [f"split_enable:0,{bool_str(self.state.split)}"]
         return [f"split_enable:0,{bool_str(self.state.split)}"], []
+
+    # -- RIT / XIT --------------------------------------------------------
+    #
+    # These were read-only until now: `refresh_if` has always parsed the
+    # enables and the offset out of the `IF` response and `state_messages`
+    # has always broadcast them, but nothing could SET them, so a client's
+    # RIT knob moved its own display and nothing else.
+    #
+    # Every one of them re-reads `IF` and broadcasts what the radio ACCEPTED
+    # rather than what was asked for (global rule 2). That matters more here
+    # than elsewhere: `RT`/`XT` are documented as disabled in QRQ CW mode, so
+    # a SET that is simply ignored is a normal outcome, not an error.
+    #
+    # WHEN THE READ-BACK DOES NOT HAPPEN, `refresh_if` returns silently and
+    # leaves the cached state alone -- a `?;` from a busy or transmitting
+    # radio (global rule 3) does that. The broadcast is then the PRE-SET
+    # value, which is the least-wrong answer available: it tells clients what
+    # the radio last actually reported instead of confirming a change that
+    # may not have happened.
+
+    def _cmd_rit_enable(self, args):
+        if len(args) >= 2 and args[1] in ("true", "false"):
+            self.cat.send("RT1" if args[1] == "true" else "RT0")
+            time.sleep(0.15)
+            self.refresh_if()
+            return [], [f"rit_enable:0,{bool_str(self.state.rit_on)}"]
+        return [f"rit_enable:0,{bool_str(self.state.rit_on)}"], []
+
+    def _cmd_xit_enable(self, args):
+        if len(args) >= 2 and args[1] in ("true", "false"):
+            self.cat.send("XT1" if args[1] == "true" else "XT0")
+            time.sleep(0.15)
+            self.refresh_if()
+            return [], [f"xit_enable:0,{bool_str(self.state.xit_on)}"]
+        return [f"xit_enable:0,{bool_str(self.state.xit_on)}"], []
+
+    def _offset_notifications(self) -> list[str]:
+        """Both offsets, always, because the K3 has only one register.
+
+        TCI models RIT and XIT as independent values; `RO` is shared. So a
+        client that sets one and is told only about that one would show the
+        other as unchanged when the radio had in fact moved it. Echoing both
+        keeps every client's two readouts agreeing with the single register
+        they actually describe.
+        """
+        return [f"rit_offset:0,{self.state.rit_offset}",
+                f"xit_offset:0,{self.state.rit_offset}"]
+
+    def _set_offset(self, args):
+        if len(args) >= 2 and args[1] != "":
+            try:
+                hz = int(float(args[1]))
+            except ValueError:
+                return [], []
+            self.cat.send(ro_command(hz))
+            time.sleep(0.15)
+            self.refresh_if()
+            return [], self._offset_notifications()
+        return [f"rit_offset:0,{self.state.rit_offset}"], []
+
+    def _cmd_rit_offset(self, args):
+        return self._set_offset(args)
+
+    def _cmd_xit_offset(self, args):
+        # Same register as RIT -- see _offset_notifications. An operator who
+        # sets the two differently will see them snap together, which is the
+        # radio being honest rather than the bridge losing a value.
+        return self._set_offset(args)
+
+    def _cmd_if(self, args):
+        """TCI's combined RIT verb: `if:<trx>,<channel>,<offset>`.
+
+        A non-zero offset implies RIT on, and zero implies RIT off -- clients
+        clear the offset by sending 0, and leaving the radio enabled at zero
+        offset would leave RIT lit on the front panel with nothing to show
+        for it.
+        """
+        if len(args) >= 3 and args[2] != "":
+            try:
+                hz = int(float(args[2]))
+            except ValueError:
+                return [], []
+            self.cat.send(ro_command(hz))
+            self.cat.send("RT1" if hz != 0 else "RT0")
+            time.sleep(0.15)
+            self.refresh_if()
+            return [], (self._offset_notifications()
+                        + [f"rit_enable:0,{bool_str(self.state.rit_on)}"])
+        return [f"if:0,0,{self.state.rit_offset}"], []
 
     # -- misc -------------------------------------------------------------
 

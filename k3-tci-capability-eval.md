@@ -133,7 +133,8 @@ client streaming for 60 s: **23.43 frames/s, zero dropped, 14.8% of one core**
 S-meter polling and the reconcile sweep all running together. Inter-frame
 jitter p50 42.88 ms, max 43.80.
 
-Still to add: RIT/XIT set, `tx_sensors`, CW keying, browser mic TX.
+Still to add: browser mic TX, and the four verbs the command map specifies
+but nothing handles yet — `agc_mode`, `sql_*`, `rx_nb_*` and `lock`.
 
 Original scope, for reference:
 

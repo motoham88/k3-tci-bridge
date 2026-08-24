@@ -81,19 +81,64 @@ async def main():
         mod0 = next(m for m in init if m.startswith("modulation:"))
         start_hz = int(vfo0.split(",")[2].rstrip(";"))
         start_mode = mod0.split(",")[1].rstrip(";")
-        print(f"\n  starting point: {start_hz} Hz, {start_mode}")
+        rit0 = next((m for m in init if m.startswith("rit_enable:")), None)
+        off0 = next((m for m in init if m.startswith("rit_offset:")), None)
+        start_rit = rit0.split(",")[1].rstrip(";") if rit0 else "false"
+        start_off = int(off0.split(",")[1].rstrip(";")) if off0 else 0
+        print(f"\n  starting point: {start_hz} Hz, {start_mode}, "
+              f"RIT {start_rit} @ {start_off} Hz")
+
+        # xit_offset rides the init burst so a client modelling the two
+        # offsets separately cannot start out of sync -- the K3 has one RO
+        # register behind both.
+        if not any(m.startswith("xit_offset:") for m in init):
+            print("  WARNING: init burst carries no xit_offset")
 
         print("\n=== QUERIES ===")
         await step(ws, "vfo:0,0;", "vfo query")
         await step(ws, "modulation:0;", "modulation query")
         await step(ws, "trx:0;", "trx query")
         await step(ws, "split_enable:0;", "split query")
+        await step(ws, "rit_enable:0;", "RIT enable query")
+        await step(ws, "rit_offset:0;", "RIT offset query")
 
         print("\n=== SETS ===")
         target = 14_055_000
         await step(ws, f"vfo:0,0,{target};", "set VFO A")
         await step(ws, "modulation:0,cwl;", "set mode CWL")
         await step(ws, "modulation:0,digu;", "set mode DIGU")
+
+        print("\n=== RIT / XIT ===")
+        # These are read-backs of the RADIO, not echoes of the request: the
+        # bridge re-reads IF and broadcasts what was accepted. A reply that
+        # simply mirrors what was sent would pass a naive check while the
+        # radio ignored the command entirely, which is how the IF length-guard
+        # bug hid for months (see k3-tci-command-map.md).
+        got = await step(ws, "rit_enable:0,true;", "RIT on")
+        if not any("rit_enable:0,true" in g for g in got):
+            print("    PROBLEM: radio did not report RIT on")
+
+        got = await step(ws, "rit_offset:0,500;", "RIT +500 Hz")
+        if not any("rit_offset:0,500" in g for g in got):
+            print("    PROBLEM: radio did not report the 500 Hz offset")
+        # One register, so BOTH offsets must be echoed or a client that
+        # models them separately silently diverges from the radio.
+        if not any("xit_offset:0,500" in g for g in got):
+            print("    PROBLEM: xit_offset not echoed with rit_offset")
+
+        got = await step(ws, "rit_offset:0,-250;", "RIT -250 Hz (sign)")
+        if not any("rit_offset:0,-250" in g for g in got):
+            print("    PROBLEM: negative offset did not read back")
+
+        await step(ws, "xit_enable:0,true;", "XIT on")
+        # `if:` is TCI's combined verb: a zero offset must also clear RIT,
+        # or the radio sits enabled at zero with nothing to show for it.
+        got = await step(ws, "if:0,0,0;", "if -> 0 (clears RIT)")
+        if not any("rit_enable:0,false" in g for g in got):
+            print("    PROBLEM: if:0,0,0 did not turn RIT off")
+
+        # Out of range: the register holds +/-9999 and the radio clamps.
+        await step(ws, "rit_offset:0,99999;", "RIT offset out of range")
 
         print("\n=== PTT (no RF: radio is in TX TEST) ===")
         await step(ws, "trx:0,true;", "key")
@@ -107,6 +152,9 @@ async def main():
         await step(ws, "no_such_command:1,2;", "unknown")
 
         print("\n=== RESTORE ===")
+        await step(ws, f"rit_offset:0,{start_off};", "restore RIT offset")
+        await step(ws, f"rit_enable:0,{start_rit};", "restore RIT")
+        await step(ws, "xit_enable:0,false;", "restore XIT")
         await step(ws, f"modulation:0,{start_mode};", "restore mode")
         await step(ws, f"vfo:0,0,{start_hz};", "restore VFO")
         print("\ndone")

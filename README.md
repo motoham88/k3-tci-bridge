@@ -9,8 +9,8 @@ connect for CAT control and two-way audio; a browser-based UI is served from
 the same port, so a phone on the LAN needs nothing installed.
 
 Working today: full CAT control, RX and TX audio at 48 kHz, CW keying with
-macros, filter and power control, S-meter, PTT with a safety watchdog,
-multi-client state broadcast, and a web UI. First on-air CW QSO made through
+macros, filter and power control, RIT/XIT, S-meter, PTT with a safety
+watchdog, multi-client state broadcast, and a web UI. First on-air CW QSO made through
 it on 20 m, and **WSJT-X 3.0.1 runs over TCI** — rig control and audio both,
 no sound-card routing.
 
@@ -173,7 +173,11 @@ referenced here belongs to its respective authors and is not redistributed.
 
 ## Not implemented
 
-Browser microphone TX (needs HTTPS/WSS for a secure context), RIT/XIT set,
-`tx_sensors`, TX_CHRONO pacing, and IQ/panadapter — the last deliberately,
-since the P3 cannot supply the data and the KXV3 IF path needs added
-hardware. See the capability evaluation for the analysis.
+Browser microphone TX (needs HTTPS/WSS for a secure context), and
+IQ/panadapter — the last deliberately, since the P3 cannot supply the data
+and the KXV3 IF path needs added hardware. See the capability evaluation
+for the analysis.
+
+`agc_mode`, squelch, the noise blanker and VFO lock are all mapped
+byte-exact in the command map and have no handler yet; each is a small
+addition on the same pattern as RIT/XIT.

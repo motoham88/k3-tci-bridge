@@ -295,10 +295,18 @@ independent, and the offset changes even when both are off.
 | `xit_offset:0,<hz>` | `RO<s><nnnn>;` | `IF;` fields 19-23 | **Same register as RIT** — see below |
 
 The K3 has *one* offset shared by RIT and XIT; TCI models them as two
-independent values. There is no way to make both true. v1: `rit_offset` and
-`xit_offset` both drive `RO`, and both echo the same value back. Document
-it in the client-facing notes; an operator who sets them differently will
-see them snap together.
+independent values. There is no way to make both true. **Implemented:**
+`rit_offset` and `xit_offset` both drive `RO`, and the bridge echoes BOTH
+back on every offset change — and carries `xit_offset` in the init burst —
+so a client that models the two separately cannot start out of sync or be
+told about only the one it set. An operator who sets them differently will
+see them snap together, which is the radio being honest rather than the
+bridge losing a value.
+
+`RT`/`XT` are documented as disabled in QRQ CW mode, so a SET that is
+simply ignored is a normal outcome. Every one of these read-backs
+broadcasts what the radio ACCEPTED (global rule 2); when the read-back
+itself fails, the pre-SET value goes out rather than a false confirmation.
 
 `RC;` (clear to zero), `RD;`/`RU;` (step down/up by the current VFO step —
 1, 10, 20 or 50 Hz) are available but not needed for the TCI mapping.
@@ -587,11 +595,23 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
 
 - **`ID017;`** returned as documented. Modem control lines are irrelevant —
   all four DTR/RTS combinations work, so the bridge needn't manage them.
-- **The `IF` response is exactly 38 characters** and every field decodes at
-  the documented offset. Live sample:
-  `IF00014030000     -000000 0003000011 ;` → freq 14,030,000 Hz, mode 3,
-  RIT off, XIT off, RX, split 0, data sub-mode 1. The layout table above is
-  confirmed byte-exact; parse by fixed offset with confidence.
+- **The `IF` response decodes at every documented offset — but its LENGTH
+  is not fixed.** The bench sample was 38 characters,
+  `IF00014030000     -000000 0003000011 ;`, ending with a space before the
+  terminator. The same radio in normal operation returns **37**,
+  `IF00007020880     +000000 0003000001;`, with no space. Both decode
+  identically: freq, mode 3, RIT/XIT flags, RX, split, data sub-mode all sit
+  where the layout table says.
+
+  **Do not length-check against 38.** `refresh_if` did, and it therefore
+  rejected every reply and returned without updating anything — for months,
+  invisibly, because frequency and mode arrive over the AI2 unsolicited
+  stream instead. Only the fields with no AI2 path (split, RIT/XIT) were
+  affected, and they sat frozen at their startup values while the radio
+  moved. Check that the response is long enough for the fields being read
+  (all at index 32 or below), not that it matches a remembered total.
+
+  Parse by fixed offset with confidence; do not trust the total length.
 - **`K31;` takes effect and the `IF` `d` field tracks `DT`** (both read 1).
 - **`RO` can return a negative zero**: the radio reported `RO-0000;`. The
   sign character is independent of the magnitude, so a parser that keys on

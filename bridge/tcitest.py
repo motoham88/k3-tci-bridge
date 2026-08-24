@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Exercise the TCI skeleton the way a real client would.
 
-Connects, collects the init handshake, then drives vfo / modulation / trx
+Connects, collects the init handshake, then drives vfo / modulation / rit
 and checks that each change is broadcast back. Restores the starting
-frequency and mode at the end.
+frequency, mode and RIT state at the end.
 
-Safe to run while the radio is in TX TEST -- the PTT step produces no RF.
+THE PTT STEP IS OFF BY DEFAULT and needs --ptt.
+
+This file used to say "safe to run while the radio is in TX TEST -- the PTT
+step produces no RF", which quietly assumed a radio setting the script
+cannot see. TX TEST is a front-panel state; `k3cat.tx_test_active()` knows
+it, but that lives in the SERVER and TCI has no verb to report it, so a
+client has no way to check. On a station with TX TEST off -- the normal
+state for one that actually works -- an unguarded run keys the transmitter
+for real, on whatever frequency the radio happens to be sitting on.
+
+So the default is now "do not transmit", and turning it on is a deliberate
+act by someone who has looked at the radio.
 """
+import argparse
 import asyncio
 import sys
 
@@ -56,7 +68,7 @@ async def step(ws, send, label):
     return got
 
 
-async def main():
+async def main(ptt: bool):
     async with connect(URL) as ws:
         print("=== INIT HANDSHAKE ===")
         init = await collect_init(ws)
@@ -140,10 +152,22 @@ async def main():
         # Out of range: the register holds +/-9999 and the radio clamps.
         await step(ws, "rit_offset:0,99999;", "RIT offset out of range")
 
-        print("\n=== PTT (no RF: radio is in TX TEST) ===")
-        await step(ws, "trx:0,true;", "key")
-        await asyncio.sleep(0.5)
-        await step(ws, "trx:0,false;", "unkey")
+        if ptt:
+            print("\n=== PTT — THIS KEYS THE TRANSMITTER ===")
+            print("    Enabled with --ptt. If the radio is not in TX TEST,")
+            print(f"    it is about to transmit for real on {start_hz} Hz.")
+            await step(ws, "trx:0,true;", "key")
+            await asyncio.sleep(0.5)
+            got = await step(ws, "trx:0,false;", "unkey")
+            # Leaving the radio keyed because a broadcast went missing is the
+            # one failure here with consequences, so say so loudly rather than
+            # trusting the unkey landed.
+            if not any("trx:0,false" in g for g in got):
+                print("    PROBLEM: no unkey confirmation — CHECK THE RADIO")
+        else:
+            print("\n=== PTT — SKIPPED ===")
+            print("    Pass --ptt to run it. It transmits for real unless the")
+            print("    radio is in TX TEST, which this script cannot verify.")
 
         print("\n=== BATCHED COMMANDS IN ONE FRAME ===")
         await step(ws, "vfo:0,0;modulation:0;trx:0;", "three in one frame")
@@ -161,8 +185,13 @@ async def main():
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--ptt", action="store_true",
+                    help="also run the PTT step — KEYS THE TRANSMITTER unless "
+                         "the radio is in TX TEST")
+    args = ap.parse_args()
     try:
-        asyncio.run(main())
+        asyncio.run(main(args.ptt))
     except Exception as exc:
         print(f"FAILED: {type(exc).__name__}: {exc}")
         sys.exit(1)

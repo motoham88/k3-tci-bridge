@@ -13,7 +13,7 @@ Working CAT control **and bidirectional audio streaming**. See
 | `tci.py` | Protocol layer. Mode mapping, init burst, TCI command handlers, PTT ownership and watchdog |
 | `server.py` | asyncio WebSocket server, client set, broadcast, reconcile sweep |
 | `tcitest.py` | Single-client exercise: handshake, queries, sets, PTT, batching |
-| `tbframetest.py` | Decoded-text path: `TB` framing, parsing, escaping. **The only test that needs no radio** |
+| `tbframetest.py` | Off-radio parsing: `TB` framing, escaping, and the `IF` length guard. **The only test that needs no radio** |
 | `multiclient.py` | Two clients — verifies broadcast-to-all and PTT release on disconnect |
 | `audio.py` | TCI binary frames, ALSA capture/playback, software volume |
 | `audiotest.py` | RX stream validation + TX audio ingest |

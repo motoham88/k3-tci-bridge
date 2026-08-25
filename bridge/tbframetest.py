@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""The `TB` decoded-text path, end to end below the socket. Needs no radio.
+"""Parsing that no radio can be in the loop for. The only test here that
+runs without one.
+
+Covers the `TB` decoded-text path and the `IF` length guard. They share a
+file because they share a failure mode rather than a feature: both are
+parsing bugs that produce no error, no log line and no visible breakage --
+the kind that survives for months because everything downstream keeps
+working off some other path. `IF`'s has now been found twice.
 
 The decoded text a `TB` reply carries may contain semicolons, which is legal
 in RTTY and PSK (programmer's reference, TB note 1). The CAT reader is
@@ -54,6 +61,16 @@ class FakeSerial:
 
     def flush(self):
         pass
+
+
+class StubCat:
+    """Stands in for K3Cat where only a canned reply is needed."""
+
+    def __init__(self, reply):
+        self.reply = reply
+
+    def ask_text(self, timeout=0.6):
+        return self.reply
 
 
 def make_cat(chunk=256):
@@ -171,10 +188,6 @@ def main():
     cat._stop.set()
 
     print("\n=== read_text parses the count, not the terminator ===")
-    class StubCat:
-        def __init__(self, reply): self.reply = reply
-        def ask_text(self, timeout=0.6): return self.reply
-
     for label, reply, want in [
         ("empty",                "TB000;",           ""),
         ("plain",                "TB005CQ CQ;",      "CQ CQ"),
@@ -205,6 +218,32 @@ def main():
         ("unreadable byte", "\ufffd",           "%EF%BF%BD"),
     ]:
         check(label, tci.tci_escape(raw), want, fails)
+
+    print("\n=== IF is checked for the fields read, not a total length ===")
+    # Found twice now. refresh_if had `len(r) < 38` and rejected every reply
+    # from a radio that sends 37; the fix missed the identical guard in
+    # on_cat_event, where it was even quieter -- a band change auto-reports
+    # FA and MD next to IF, and those branches worked, so frequency and mode
+    # tracked while split and the TX flag waited on the 3 s reconcile.
+    SHORT = "IF00007020880     +000000 0003000001;"      # 37, this radio
+    REF   = "IF00014030000     -000000 0003000011 ;"     # 38, the reference
+    for label, msg, want in [
+        ("37-char form (this radio)", SHORT, 7020880),
+        ("38-char form (reference)",  REF,  14030000),
+        ("exactly the last field",    SHORT[:33], 7020880),
+    ]:
+        b = tci.Bridge(StubCat(None))
+        b.state.vfo_a = 1
+        out = b.on_cat_event(msg)
+        check(label + ": parsed", b.state.vfo_a, want, fails)
+        check(label + ": broadcast",
+              any(m.startswith(f"vfo:0,0,{want}") for m in out), True, fails)
+
+    for label, msg in [("one short of it", SHORT[:32]), ("stub", "IF;")]:
+        b = tci.Bridge(StubCat(None))
+        b.state.vfo_a = 1
+        check(f"too short to read ({label}): ignored",
+              (b.on_cat_event(msg), b.state.vfo_a), ([], 1), fails)
 
     print()
     if fails:

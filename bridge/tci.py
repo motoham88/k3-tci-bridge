@@ -1083,7 +1083,15 @@ class Bridge:
         elif msg.startswith("MD") and len(msg) >= 4 and msg[2] in K3_TO_TCI:
             s.mode = K3_TO_TCI[msg[2]]
             out.append(f"modulation:0,{s.mode}")
-        elif msg.startswith("IF") and len(msg) >= 38:
+        # Same length trap as refresh_if, and it survived the fix there: this
+        # radio's IF is 37 characters, so `len(msg) >= 38` rejected every
+        # unsolicited one and this branch had never run. Silent, because a
+        # band change auto-reports FA and MD alongside IF and those branches
+        # do work -- so frequency and mode tracked, and only split and the
+        # TX flag sat still until the 3 s reconcile swept them up. Ask
+        # whether the fields being read are present, exactly as refresh_if
+        # now does; every one is at IF_LAST_FIELD or below.
+        elif msg.startswith("IF") and len(msg) > self.IF_LAST_FIELD:
             before = (s.mode, s.split, s.transmitting, s.vfo_a)
             self._parse_if_str(msg)
             if (s.mode, s.split, s.transmitting, s.vfo_a) != before:

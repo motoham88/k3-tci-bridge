@@ -675,6 +675,17 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
   (all at index 32 or below), not that it matches a remembered total.
 
   Parse by fixed offset with confidence; do not trust the total length.
+
+  **There were two of these guards, and fixing one left the other.**
+  `on_cat_event` checked `len(msg) >= 38` on the *unsolicited* `IF` and so
+  had never run at all. That one hid even better than the first: a band
+  change auto-reports `FA` and `MD` alongside `IF`, and those branches
+  worked, so frequency and mode tracked while split and the TX flag waited
+  on the 3 s reconcile to notice. If a third appears, the same rule
+  settles it — ask whether the fields being read are present. Both are
+  covered by `bridge/tbframetest.py`, which fails on the 37-character form
+  and passes on the 38-character one, which is precisely why the bug was
+  invisible.
 - **`K31;` takes effect and the `IF` `d` field tracks `DT`** (both read 1).
 - **`RO` can return a negative zero**: the radio reported `RO-0000;`. The
   sign character is independent of the magnitude, so a parser that keys on

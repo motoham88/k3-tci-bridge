@@ -51,6 +51,12 @@ display backwards), and one `vfo` GET is issued on release to resync —
 which is also what corrects the display when the radio clamps at a band
 edge.
 
+Confirmed on the air: dragging the wheel with a second client connected
+does not stall that client — its commands keep landing throughout. That is
+the failure the throttle exists to prevent, and the only one here with
+consequences beyond the page doing the dragging, since the lock a runaway
+drag would hold is the same one PTT goes through.
+
 **Decoded text** appears in its own panel, fed by `rx_text` (see the command
 map). It stays empty until **TEXT DEC** is enabled at the radio, and the
 panel says so, because `TB;` cannot tell a disabled decoder from a quiet

@@ -13,6 +13,7 @@ Working CAT control **and bidirectional audio streaming**. See
 | `tci.py` | Protocol layer. Mode mapping, init burst, TCI command handlers, PTT ownership and watchdog |
 | `server.py` | asyncio WebSocket server, client set, broadcast, reconcile sweep |
 | `tcitest.py` | Single-client exercise: handshake, queries, sets, PTT, batching |
+| `tbframetest.py` | Decoded-text path: `TB` framing, parsing, escaping. **The only test that needs no radio** |
 | `multiclient.py` | Two clients — verifies broadcast-to-all and PTT release on disconnect |
 | `audio.py` | TCI binary frames, ALSA capture/playback, software volume |
 | `audiotest.py` | RX stream validation + TX audio ingest |
@@ -34,8 +35,26 @@ socket from an `https://` page, and there is no second server to run.
 `process_request` checks for an `Upgrade: websocket` header and hands those
 requests to the WebSocket handler; everything else gets the page.
 
-Works on a phone on the same LAN. Frequency is tuned by clicking or
-scrolling the upper/lower half of any digit.
+Works on a phone on the same LAN. Frequency is tuned three ways: click or
+scroll the upper/lower half of any digit, use the step buttons, or drag the
+tuning wheel at 1 Hz / 10 Hz / 100 Hz / 1 kHz per tick. They complement each
+other — the digits are exact, the wheel is fast.
+
+**The wheel throttles its sends, and has to.** Every `vfo` SET costs the
+bridge a write, a 120 ms settle and a read-back with a 1 s timeout, all
+under the lock that serialises *every* client's commands — PTT included. A
+drag generates events far faster than that, so the UI keeps one send in
+flight plus one queued and drops the rest; each carries an absolute
+frequency, so the dropped ones lose nothing. Read-backs are ignored while
+the wheel is moving (they arrive behind the finger and would drag the
+display backwards), and one `vfo` GET is issued on release to resync —
+which is also what corrects the display when the radio clamps at a band
+edge.
+
+**Decoded text** appears in its own panel, fed by `rx_text` (see the command
+map). It stays empty until **TEXT DEC** is enabled at the radio, and the
+panel says so, because `TB;` cannot tell a disabled decoder from a quiet
+band — both answer `TB000;`.
 
 **Known limitation — no microphone TX from the browser.** `getUserMedia`
 requires a secure context, and `http://` on a LAN address is not one
@@ -141,6 +160,12 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
   when to send TX audio; measured at 46.90/s against a 46.88/s target
 - `tx_sensors` carrying the measured level of TX audio actually
   received, so "keyed but sending nothing" is visible rather than silent
+- `rit_enable` / `xit_enable` / `rit_offset` / `xit_offset` / `if`, all
+  read back from `IF`; both offsets are reported together because the K3
+  has one shared `RO` register
+- `rx_text` — the radio's decoded CW/RTTY/PSK, read with `TB` at 3.3 Hz
+  and backed off to 0.67 Hz while nothing is decoding
+- Web UI tuning wheel, 1 Hz to 1 kHz per tick, with throttled sends
 
 ## Known limitation: enabling split
 
@@ -156,9 +181,10 @@ returns `?;` with the service stopped.
 
 ## Not yet implemented
 
-Browser microphone TX (needs HTTPS/WSS), RIT/XIT set, `tx_sensors`
-(built but not driven — needed only by clients like WSJT-X that wait to be
-asked for TX audio), IQ (deliberately never — no panadapter).
+Browser microphone TX (needs HTTPS/WSS), `agc_mode`, squelch, the noise
+blanker and VFO lock (each mapped byte-exact in the command map, each a
+small addition on the pattern RIT/XIT used), IQ (deliberately never — no
+panadapter).
 
 ## Six things not to "fix"
 
@@ -185,10 +211,10 @@ asked for TX audio), IQ (deliberately never — no panadapter).
    `ctx.sampleRate` relabels 48 kHz samples as whatever the hardware runs
    at and plays them at the wrong pitch.
 
-## Two radio settings that fail silently
+## Three radio settings that fail silently
 
-Both were found the hard way. Neither produces an error of any kind — the
-only symptom is that nothing happens.
+All found the hard way. None produces an error of any kind — the only
+symptom is that nothing happens.
 
 1. **`MIC+LIN` (menu 015) must be ON** for USB audio to reach the
    transmitter. It is the *enable* for LINE IN — with it OFF nothing
@@ -201,6 +227,12 @@ only symptom is that nothing happens.
    the K3 buffers the text and never transmits. The bridge now checks and
    enables it automatically before keying, since a remote operator cannot
    reach the front panel.
+3. **TEXT DEC must be on** for `TB;` to return anything. Unlike the other
+   two this one *cannot* be fixed from here: there is no CAT command for
+   it. Hold **TEXT DEC** at the radio and select `CW 5-40` with VFO B — a
+   `T` appears under the `CW` icon. And unlike the other two it cannot even
+   be detected: a disabled decoder answers `TB000;`, which is exactly what
+   a quiet band answers. The UI states both rather than picking one.
 
 ## A multi-client trap the tests could not catch
 

@@ -136,6 +136,13 @@ v1 does not use `DS` (VFO A text/icons) or `IC` (icon/status). Both return
 bytes ≥ 0x80 and must be read as binary, not text. Skipping them keeps the
 whole reader line-oriented on `;`. Don't add them casually.
 
+**`TB` is the one exception, and it is framed by count, not by `;`.** Its
+decoded text may legally contain semicolons (see *Text decode* below), so
+the reader takes the exact number of characters the reply declares whenever
+a `TB` GET is outstanding. That path opens only for a reply we asked for —
+`TB` is GET-only, so the radio never sends one unsolicited. Everything else
+still stops at the first `;`.
+
 `RV`'s response format is printed in the reference **without** a
 terminating semicolon (`RVxNN.NN`) — every other RSP has one. Parse
 defensively if you use it.
@@ -525,6 +532,62 @@ sending the next chunk.
 Prosign mapping the K3 accepts inside `KY` text: `(`=KN, `+`=AR, `=`=BT,
 `%`=AS, `*`=SK, `!`=VE. Pass client text through unmodified; these are the
 documented escapes if a client wants them.
+
+### Text decode
+
+| TCI | K3S GET | Notes |
+|---|---|---|
+| `rx_text:0,<text>` * | `TB;` | Decoded CW/RTTY/PSK. **Not a TCI command** — see below |
+
+\* TCI has no message for decoded text, so this one is the bridge's own.
+Clients that do not know it ignore it, which is the whole reason for
+choosing a message on the existing socket over a second channel.
+
+`TB` response is `TBtrrs;` — `t` is the count of TX characters still to be
+sent (0-9, saturating), `rr` the count of RX characters available (00-40),
+and `s` exactly `rr` characters of text. The empty reply is `TB000;`.
+
+**Frame it by `rr`, not by the terminator.** Semicolons are legal in decoded
+RTTY and PSK, and the reference says so explicitly: the count exists *because*
+the text can contain the character everything else uses as a delimiter. A
+reader that stops at the first `;` returns a truncated reply and hands the
+tail to the unsolicited path, where a fragment like `" DE;"` reads as the
+real command `DE`. Covered off-radio by `bridge/tbframetest.py`.
+
+**A `TB` GET that times out has to stay accounted for.** A band change
+defers command handling for up to 500 ms (global rule 4), which is inside
+the request timeout, so the reply can land while the *next* poll is already
+waiting. Delivering it there answers that poll with the previous poll's
+text and leaves the reply that really belongs to it to be framed on `;` —
+both failures at once. Count the replies still owed rather than tracking a
+single "expecting one" flag: keep framing by count so a semicolon still
+cannot reach the command stream, and drop everything except the newest.
+
+**Reading is destructive.** The radio clears its RX count as it answers, so
+whatever a `TB` GET returns is the only time anyone will see it. Exactly one
+poll loop may call it. (The radio's own VFO B display is driven separately
+and is not consumed by `TB`.)
+
+**The buffer holds 40 characters** and the reference requires polling "often
+enough to prevent loss of incoming text". 40 characters is roughly 12 s of
+40 WPM CW, so the interval has headroom — but it is a deadline, not a
+quality setting. The bridge polls at 3.3 Hz, dropping to 0.67 Hz after 5 s
+with nothing decoded and restoring on the first character.
+
+**Text decode is enabled at the front panel and has no CAT command.** Hold
+**TEXT DEC** and select `CW 5-40` with VFO B; a `T` appears under the `CW`
+icon. `TT` (text-to-terminal) is *not* a substitute — it enables a raw ASCII
+stream that is not `;`-framed at all, and the reference itself recommends
+`TB` over it, mandatorily so if a P3 is in the CAT path.
+
+**`TB000;` is ambiguous and cannot be disambiguated.** It is what a radio
+with text decode switched off returns, and equally what a radio with text
+decode on and a quiet band returns. Nothing in CAT separates them. Report
+the ambiguity rather than guessing at it — the web UI says both.
+
+Not polled during transmit, for the same reason as the S-meter. The cost is
+that CW you send yourself is read back only after you unkey, and a
+transmission longer than 40 characters loses its beginning.
 
 ### Init block values
 

@@ -16,6 +16,7 @@ import logging
 import math
 import threading
 import time
+from urllib.parse import quote
 
 log = logging.getLogger("tci")
 
@@ -60,6 +61,32 @@ def ro_command(hz: int) -> str:
     """
     hz = max(-9999, min(9999, int(hz)))
     return f"RO{'-' if hz < 0 else '+'}{abs(hz):04d}"
+
+
+# Everything printable that is not framing. `quote` escapes the rest.
+_SAFE = "".join(c for c in map(chr, range(0x20, 0x7F)) if c not in "%,;")
+
+
+def tci_escape(text: str) -> str:
+    """Percent-encode anything that would break TCI framing.
+
+    A TCI message is `;`-terminated with `,`-separated arguments, so neither
+    character can appear raw inside one -- and decoded text may contain both
+    (semicolons are legal in RTTY and PSK; commas turn up everywhere). The
+    web UI splits incoming data on `;` before it parses anything, so a raw
+    one there does not merely garble a field, it invents a second message.
+
+    `%` goes too, so the encoding round-trips, and so does everything
+    outside printable ASCII -- RTTY can deliver control characters, and the
+    CAT reader turns any byte it cannot read as ASCII into U+FFFD. The
+    result is ordinary UTF-8 percent-encoding, which a client decodes with
+    `decodeURIComponent` and nothing bespoke.
+
+    Encoding UTF-8 rather than one byte per character is the whole reason
+    this uses `quote`: `%DC` for U+00DC is not valid percent-encoding, and
+    `decodeURIComponent` does not return it -- it throws.
+    """
+    return quote(text, safe=_SAFE)
 
 
 class RadioState:
@@ -922,6 +949,50 @@ class Bridge:
         return self._cmd_mute(args)
 
     # ---------- metering ----------
+
+    def read_text(self) -> str | None:
+        """Characters decoded since the last call: `""` if none, None on a
+        reply we could not use.
+
+        `TB` returns the K3's decoded CW/RTTY/PSK text. Three things about
+        it shape everything above:
+
+        READING IS DESTRUCTIVE. The radio clears its RX count as it answers,
+        so whatever this returns is the only time anyone sees it. Nothing
+        may call this except the one poll loop -- a second caller would eat
+        characters the first will never know existed. (The radio's own VFO B
+        display is driven separately and is not consumed by `TB`.)
+
+        THE BUFFER HOLDS 40 CHARACTERS, and the reference is explicit that
+        the application must "poll with TB; often enough to prevent loss of
+        incoming text". 40 characters is about 12 s of 40 WPM CW, so the
+        poll interval has a lot of headroom -- but it is a real deadline,
+        not a quality setting.
+
+        AN EMPTY REPLY IS AMBIGUOUS. `TB000;` is what a radio with text
+        decode switched off returns, and it is equally what a radio with
+        text decode on and nothing to hear returns. There is no way to tell
+        them apart from CAT, so this does not try; callers report the
+        distinction as unknown rather than guessing. Text decode is enabled
+        at the front panel (hold TEXT DEC) and has no CAT command.
+        """
+        r = self.cat.ask_text()
+        if not r or not r.startswith("TB") or len(r) < 6:
+            return None
+        try:
+            n = int(r[3:5])
+        except ValueError:
+            return None
+        # Trust the count, not the terminator -- that is the whole point of
+        # the counted read in k3cat.ask_text. Text shorter than the count
+        # means a truncated reply; treat it as unusable rather than
+        # publishing a fragment.
+        body = r[5:-1]
+        if len(body) < n:
+            log.debug("TB short: %d chars declared, %d present (%r)",
+                      n, len(body), r)
+            return None
+        return body[:n]
 
     def read_smeter(self) -> int | None:
         """S-meter in dBm for `rx_smeter`.

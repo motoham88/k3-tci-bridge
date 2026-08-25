@@ -4,6 +4,8 @@ One serial port carries two kinds of traffic: replies to our own GETs, and
 unsolicited AI2 messages the radio emits when the operator touches the front
 panel. A single reader thread parses every ';'-terminated message and routes
 it -- to a waiting request if one matches, otherwise to the event callback.
+`TB` is the one exception: its decoded text may itself contain semicolons,
+so it is framed by the character count it carries. See `ask_text`.
 
 Implements the global rules from k3-tci-command-map.md:
   * K31 + K20 at startup
@@ -32,6 +34,31 @@ def cmd_prefix(s: str) -> str:
     return (m.group(1) + m.group(2)) if m else ""
 
 
+# Outstanding TB replies tolerated before assuming they are lost. Poll
+# intervals are longer than the request timeout, so this only grows when the
+# radio is deferring commands, and only by one per poll.
+_TB_MAX_OWED = 3
+
+
+def _tb_len(buf: bytes) -> int | None:
+    """Total byte length of the `TB` frame at the head of `buf`, or None.
+
+    `TBtrrs;` -- t is the count of TX characters still to be sent, rr the
+    count of RX characters available (00-40), s exactly rr characters of
+    decoded text. So the frame is 5 header + rr text + 1 terminator, and
+    the empty reply `TB000;` is 6.
+
+    None means rr did not parse, which should not happen; the caller falls
+    back to ';' framing rather than blocking the reader forever on a count
+    that will never be satisfied.
+    """
+    try:
+        rr = int(buf[3:5])
+    except ValueError:
+        return None
+    return 5 + rr + 1
+
+
 class K3Cat:
     def __init__(self, port: str, baud: int = 38400, on_event=None):
         self.port, self.baud = port, baud
@@ -44,6 +71,8 @@ class K3Cat:
         self._reader: threading.Thread | None = None
         # echo-loop guard: prefix -> expiry time
         self._recent_sets: dict[str, float] = {}
+        # TB replies asked for but not yet consumed; see _read_loop.
+        self._tb_owed = 0
         self.tx_test: bool | None = None
 
     # ---------- lifecycle ----------
@@ -99,7 +128,45 @@ class K3Cat:
             if not chunk:
                 continue
             buf += chunk
-            while b";" in buf:
+            while True:
+                # TB carries its own length, because the decoded text it
+                # returns may contain semicolons -- legal in RTTY and PSK
+                # (programmer's reference, TB note 1). Partitioning on the
+                # first ';' would cut such a reply in half and hand the tail
+                # to _dispatch as an unsolicited message, where a fragment
+                # like " DE;" reads as the real command DE. So while a TB
+                # GET is outstanding and one is at the head of the buffer,
+                # take exactly the bytes it declares.
+                #
+                # Scoped as tightly as possible: the radio never sends TB
+                # unsolicited (it is GET only), so this path can only open
+                # for a reply we asked for.
+                if self._tb_owed and buf.startswith(b"TB") and len(buf) >= 5:
+                    need = _tb_len(buf)
+                    if need is None:            # malformed count: fall
+                        self._tb_owed = 0       # through and resync on ';'
+                    elif len(buf) < need:
+                        break                   # rest of the text in flight
+                    else:
+                        msg = bytes(buf[:need]).decode("ascii", "replace")
+                        buf = bytearray(buf[need:])
+                        self._tb_owed -= 1
+                        # Only the NEWEST reply answers the request now in
+                        # flight. Anything still owed behind this one means
+                        # it belongs to a request that timed out and was
+                        # abandoned; delivering it would answer the current
+                        # poll with the previous poll's text and leave the
+                        # reply that really belongs to it to be framed on
+                        # ';'. Frame it either way -- that is what keeps a
+                        # semicolon in the text out of the command stream --
+                        # but drop it rather than dispatch it.
+                        if self._tb_owed == 0:
+                            self._dispatch(msg)
+                        else:
+                            log.debug("dropped stale TB reply: %r", msg)
+                        continue
+                if b";" not in buf:
+                    break
                 raw, _, rest = buf.partition(b";")
                 buf = bytearray(rest)
                 msg = raw.decode("ascii", "replace").strip() + ";"
@@ -164,6 +231,47 @@ class K3Cat:
                     self._pending = None
                 log.warning("timeout waiting for %s", body)
                 return None
+
+    def ask_text(self, timeout: float = 0.6) -> str | None:
+        """`TB;` -- the received-text buffer, framed by count, not by ';'.
+
+        Returns the raw `TBtrrs;` response, `'?;'`, or None on timeout.
+
+        This is a normal GET in every respect except framing: the reader
+        needs to know a TB reply is coming so it can take the declared
+        number of characters instead of stopping at the first semicolon.
+        See _read_loop for why that matters.
+        """
+        q: queue.Queue = queue.Queue(maxsize=1)
+        with self._tx_lock:
+            if self._tb_owed >= _TB_MAX_OWED:
+                # Replies that never came at all, which should not happen --
+                # TB always answers. Assume they are gone rather than
+                # discarding every future reply as stale forever.
+                log.warning("%d TB replies never arrived; resyncing",
+                            self._tb_owed)
+                self._tb_owed = 0
+            with self._pending_lock:
+                self._pending = ("TB", q)
+            self._tb_owed += 1
+            self._ser.write(b"TB;")
+            self._ser.flush()
+            try:
+                r = q.get(timeout=timeout)
+            except queue.Empty:
+                with self._pending_lock:
+                    self._pending = None
+                # The reply is still owed, and saying so is what protects
+                # the next poll: the reader keeps framing by count, so a
+                # semicolon in the abandoned text cannot reach the command
+                # stream, and it knows to drop that reply rather than hand
+                # it to whoever asks next.
+                log.warning("timeout waiting for TB")
+                return None
+            if r and not r.startswith("TB"):
+                # '?;' answered the request, so no TB frame is coming for it.
+                self._tb_owed = max(0, self._tb_owed - 1)
+            return r
 
     def set_verified(self, set_cmd: str, query: str, expect: str,
                      tries: int = 3, settle: float = 0.35) -> bool:

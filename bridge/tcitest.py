@@ -2,8 +2,8 @@
 """Exercise the TCI skeleton the way a real client would.
 
 Connects, collects the init handshake, then drives vfo / modulation / rit
-and checks that each change is broadcast back. Restores the starting
-frequency, mode and RIT state at the end.
+and checks that each change is broadcast back, and watches for decoded
+text. Restores the starting frequency, mode and RIT state at the end.
 
 THE PTT STEP IS OFF BY DEFAULT and needs --ptt.
 
@@ -151,6 +151,27 @@ async def main(ptt: bool):
 
         # Out of range: the register holds +/-9999 and the radio clamps.
         await step(ws, "rit_offset:0,99999;", "RIT offset out of range")
+
+        print("\n=== DECODED TEXT — observation only ===")
+        print("    Listening 6 s for rx_text. Silence is NOT a failure: it")
+        print("    needs TEXT DEC on at the radio (front panel, no CAT")
+        print("    command) and something on frequency worth decoding.")
+        seen = [m for m in await drain(ws, 6.0)
+                if isinstance(m, str) and m.startswith("rx_text")]
+        if seen:
+            print(f"    {len(seen)} message(s), first few:")
+            for m in seen[:5]:
+                print(f"      {m}")
+            # The payload is percent-encoded precisely so these cannot
+            # appear raw. One that does is a framing bug the receiving
+            # client would show as a truncated line plus a phantom command,
+            # which is not a symptom anyone would trace back to here.
+            bad = [m for m in seen if ";" in m[:-1] or "," in m[10:]]
+            if bad:
+                print(f"    PROBLEM: unescaped framing character: {bad[0]!r}")
+        else:
+            print("    none seen — TEXT DEC off, or a quiet band. Both answer")
+            print("    TB000; and nothing in CAT tells them apart.")
 
         if ptt:
             print("\n=== PTT — THIS KEYS THE TRANSMITTER ===")

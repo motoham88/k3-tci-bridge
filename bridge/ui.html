@@ -39,6 +39,45 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 .d.lead{color:#4a5364}
 #vfob{font-family:var(--mono); color:var(--dim); font-size:13px; text-align:center}
 
+/* tuning wheel: drag right to tune up. The ticks are a repeating gradient
+   whose offset follows the drag, so the strip reads as a knob turning
+   rather than a slider being dragged to a position -- it has no ends. */
+#wheel{
+  position:relative; height:46px; margin-top:10px; border-radius:8px;
+  border:1px solid var(--line); background-color:var(--panel2);
+  cursor:ew-resize; touch-action:none; overflow:hidden;
+}
+#ticks{
+  position:absolute; inset:0;
+  background-image:repeating-linear-gradient(90deg,
+    var(--dim) 0 1px, transparent 1px 12px);
+  opacity:.55;
+}
+/* Fake the curvature of a real knob: the face darkens towards both edges,
+   which is what stops it reading as a flat ruler. */
+#wheel::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(90deg, var(--panel) 0, transparent 18%,
+    transparent 82%, var(--panel) 100%);
+}
+#wheel .mark{
+  position:absolute; top:6px; bottom:6px; left:50%; width:2px;
+  margin-left:-1px; background:var(--accent); border-radius:1px;
+}
+#wheel.live{border-color:var(--accent)}
+#wheel.live #ticks{opacity:.9}
+#wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
+#wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
+
+/* decoded text */
+#decode{
+  font-family:var(--mono); font-size:14px; line-height:1.5; height:92px;
+  overflow-y:auto; white-space:pre-wrap; word-break:break-word;
+  background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+  padding:8px; color:var(--ink); -webkit-user-select:text; user-select:text;
+}
+#decode.idle{color:var(--dim)}
+
 /* buttons */
 button{
   background:var(--panel2); color:var(--ink); border:1px solid var(--line);
@@ -101,6 +140,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button data-step="1000">+1k</button>
     <button id="ab">A⇄B</button>
   </div>
+  <div id="wheel"><div id="ticks"></div><div class="mark"></div></div>
+  <div id="wrate"></div>
 </div>
 
 <div class="panel">
@@ -179,6 +220,16 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
 </div>
 
+<div class="panel" id="decodepanel">
+  <div class="row">
+    <span class="lbl">Decoded text</span>
+    <span class="spacer"></span>
+    <button id="declear" style="padding:5px 9px;font-size:12px">Clear</button>
+  </div>
+  <div id="decode" class="idle" style="margin-top:8px"></div>
+  <div class="sub" id="dechint" style="margin-top:6px"></div>
+</div>
+
 <div class="panel" id="txpanel">
   <div class="row">
     <span class="lbl">TX audio</span>
@@ -211,7 +262,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 // ws:// socket from an https:// page, and the bridge speaks ws://.
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
-            ready:false, flo:0, fhi:0, txLevel:0, txSeen:0 };
+            ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
+            tuning:false, decoded:false };
 const $ = s => document.querySelector(s);
 let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
 
@@ -250,9 +302,21 @@ function onText(msg){
     case "ready":   S.ready = true; $("#dot").className = "on"; log("ready"); break;
     case "start":   break;
     case "vfo":
-      if (args[1] === "0"){ S.vfoA = +args[2]; drawFreq(); }
+      // While the wheel is turning, read-backs arrive behind the finger --
+      // the bridge is answering a frequency already tuned past, and applying
+      // it would drag the display backwards under the operator. They are
+      // dropped, and endDrag issues one GET afterwards to resync; because
+      // the bridge handles commands in order, that GET reports whatever the
+      // last SET actually settled on, band-edge clamp included.
+      if (args[1] === "0"){ if (S.tuning) break; S.vfoA = +args[2]; drawFreq(); }
       else if (args[1] === "1"){ S.vfoB = +args[2]; $("#vfob").textContent = "B  " + fmt(S.vfoB); }
       break;
+    case "rx_text":
+      // The bridge's own message; TCI has none for decoded text. The payload
+      // is percent-encoded because ';' and ',' are legal in decoded RTTY and
+      // PSK and would otherwise be read as framing -- note that the socket
+      // handler above splits on ';' before this function ever sees a message.
+      appendDecode(unescapeText(args.slice(1).join(","))); break;
     case "modulation":
       // The bridge may use any case; normalise like other TCI clients do.
       S.mode = (args[1]||"").toUpperCase(); paintModes(); paintFilters(); paintCw(); break;
@@ -342,11 +406,134 @@ function drawFreq(){
     d.append(up, dn); el.appendChild(d);
   }
 }
+// Every `vfo` SET costs the bridge a write, a 120 ms settle and a read-back
+// with a 1 s timeout -- all under the lock that serialises EVERY client's
+// commands, PTT included. So the send rate is not this page's own business,
+// and a wheel drag can produce events far faster than a finger crosses
+// pixels. Sends are throttled to one in flight plus one queued; each carries
+// an absolute frequency, so the ones dropped in between lose nothing.
+const VFO_MIN_MS = 120;
+let vfoTimer = null, vfoQueued = false;
+function sendVfo(){
+  if (vfoTimer){ vfoQueued = true; return; }
+  send(`vfo:0,0,${Math.round(S.vfoA)}`);
+  vfoTimer = setTimeout(() => {
+    vfoTimer = null;
+    if (vfoQueued){ vfoQueued = false; sendVfo(); }
+  }, VFO_MIN_MS);
+}
 function step(hz){
   S.vfoA = Math.max(0, S.vfoA + hz);
   drawFreq();                                   // optimistic; the bridge
-  send(`vfo:0,0,${Math.round(S.vfoA)}`);        // echoes the accepted value
+  sendVfo();                                    // echoes the accepted value
 }
+// ── tuning wheel ──────────────────────────────────────────────────────────
+// Complements the digit stepping rather than replacing it: the digits are
+// exact and the wheel is fast, and they are wanted at different moments.
+//
+// The strip has no ends and no position -- only motion. Dragging right tunes
+// up, the ticks slide with the drag, and releasing does not spring back,
+// which is how a knob behaves and how a slider does not.
+const WHEEL_RATES = [1, 10, 100, 1000];
+const PX_PER_TICK = 12;                 // must match the CSS tick gradient
+let wheelStep = 10, tickAcc = 0, tickOffset = 0;
+
+const wrate = $("#wrate");
+WHEEL_RATES.forEach(hz => {
+  const b = document.createElement("button");
+  b.textContent = hz >= 1000 ? (hz / 1000) + " k" : hz + " Hz";
+  b.dataset.hz = hz;
+  b.onclick = () => { wheelStep = hz; paintRates(); };
+  wrate.appendChild(b);
+});
+function paintRates(){
+  [...wrate.children].forEach(b =>
+    b.classList.toggle("on", +b.dataset.hz === wheelStep));
+}
+paintRates();
+
+const wheel = $("#wheel"), ticksEl = $("#ticks");
+let dragId = null, lastX = 0, settleTimer = null;
+
+function turn(dx){
+  tickOffset += dx;
+  ticksEl.style.backgroundPositionX = tickOffset + "px";
+  // Accumulate pixels and spend them a whole tick at a time, so slow
+  // movement still resolves to exact multiples of the selected step
+  // instead of drifting by fractions of one.
+  tickAcc += dx;
+  const n = Math.trunc(tickAcc / PX_PER_TICK);
+  if (n){ tickAcc -= n * PX_PER_TICK; step(n * wheelStep); }
+}
+
+wheel.addEventListener("pointerdown", e => {
+  if (dragId !== null) return;
+  dragId = e.pointerId; lastX = e.clientX; tickAcc = 0;
+  wheel.setPointerCapture(dragId);
+  wheel.classList.add("live");
+  clearTimeout(settleTimer);
+  S.tuning = true;
+});
+wheel.addEventListener("pointermove", e => {
+  if (e.pointerId !== dragId) return;
+  const dx = e.clientX - lastX;
+  lastX = e.clientX;
+  turn(dx);
+});
+function endDrag(e){
+  if (e.pointerId !== dragId) return;
+  dragId = null;
+  wheel.classList.remove("live");
+  // Long enough for the one send that may still be queued to go out. The
+  // GET then queues behind it at the bridge, which handles commands in
+  // order -- so it answers with the frequency that SET settled on, and the
+  // display corrects itself if the radio clamped at a band edge.
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => { S.tuning = false; send("vfo:0,0"); },
+                           VFO_MIN_MS + 280);
+}
+wheel.addEventListener("pointerup", endDrag);
+wheel.addEventListener("pointercancel", endDrag);
+// A mouse wheel over the strip tunes too, at the selected rate.
+wheel.addEventListener("wheel", e => {
+  e.preventDefault();
+  step((e.deltaY < 0 ? 1 : -1) * wheelStep);
+}, {passive:false});
+
+// ── decoded text ──────────────────────────────────────────────────────────
+const dec = $("#decode");
+const DEC_MAX = 4000;                   // characters kept in the panel
+function unescapeText(t){
+  try { return decodeURIComponent(t); }
+  catch (err){ return t; }              // never let a bad escape stop decode
+}
+function appendDecode(text){
+  if (!text) return;
+  if (!S.decoded){ S.decoded = true; dec.classList.remove("idle");
+                   dec.textContent = ""; $("#dechint").textContent = ""; }
+  // Follow the tail only if the operator is already at it. Yanking the view
+  // back down while they are reading something further up is worse than
+  // letting the display lag behind the band.
+  const atEnd = dec.scrollHeight - dec.scrollTop - dec.clientHeight < 24;
+  dec.textContent = (dec.textContent + text).slice(-DEC_MAX);
+  if (atEnd) dec.scrollTop = dec.scrollHeight;
+}
+function decodeIdle(){
+  // `TB000;` is what the radio returns with text decode switched OFF, and
+  // it is exactly what it returns with text decode on and nobody calling.
+  // Nothing in CAT separates the two, so the panel says so rather than
+  // sitting empty and looking broken.
+  S.decoded = false;
+  dec.classList.add("idle");
+  dec.textContent = "waiting for decoded text…";
+  $("#dechint").textContent =
+    "Text decode is a front-panel setting with no CAT command: on the radio,"
+    + " hold TEXT DEC and select CW 5-40 with VFO B. A quiet band looks the"
+    + " same from here.";
+}
+decodeIdle();
+$("#declear").onclick = decodeIdle;
+
 document.querySelectorAll("[data-step]").forEach(b =>
   b.onclick = () => step(+b.dataset.step));
 $("#ab").onclick = () => { const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };

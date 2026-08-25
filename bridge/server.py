@@ -410,6 +410,49 @@ class Server:
             if dbm is not None:
                 await self.broadcast([f"rx_smeter:0,{dbm}"])
 
+    async def text_task(self, fast: float = 0.3, idle: float = 1.5,
+                        quiet: float = 5.0) -> None:
+        """Poll the K3's decoded CW/RTTY/PSK text and broadcast it.
+
+        Sent as `rx_text:0,<text>`, percent-encoded (see tci.tci_escape).
+        This is the one message the bridge invents: TCI has no decoded-text
+        command, and a client that does not know this one ignores it.
+
+        RATE. `TB` is a destructive read of a 40-character buffer, and the
+        reference requires polling "often enough to prevent loss of incoming
+        text" -- so the interval is a deadline, not a preference. 40
+        characters is about 8 s of 60 WPM CW, which both rates clear
+        comfortably; `fast` exists for latency, not for safety.
+
+        BACKING OFF. Most of the time this radio is not decoding anything --
+        text decode is a front-panel setting that is usually off, and a
+        radio with it off returns `TB000;` forever. Polling 3.3 times a
+        second in perpetuity would buy nothing and spend CAT bandwidth that
+        the S-meter and reconcile loops also want, so a run of empty replies
+        drops the rate. Any character at all restores it.
+
+        NOT DURING TRANSMIT, for the same reason as the S-meter: the
+        reference warns against polling while transmitting, and doing it at
+        5 Hz for the TX meters is what dropped this radio out of TX on the
+        bench. The cost is that CW you send yourself is decoded into the
+        buffer and read back only once you unkey, and a transmission longer
+        than 40 characters loses its beginning. Watching your own sending is
+        not what this is for.
+        """
+        empty, period = 0, fast
+        while True:
+            await asyncio.sleep(period)
+            if not self.clients or self.bridge.state.transmitting:
+                continue
+            text = await asyncio.to_thread(self.bridge.read_text)
+            if text:
+                empty, period = 0, fast
+                await self.broadcast([f"rx_text:0,{tci.tci_escape(text)}"])
+            else:
+                empty += 1
+                if empty * period >= quiet:
+                    period = idle
+
     async def reconcile_task(self, period: float = 3.0) -> None:
         """AI2 reports only a subset of controls, so sweep periodically and
         push anything that drifted. Cheap: one IF read."""
@@ -438,7 +481,8 @@ class Server:
                      "<pi-address>" if self.host == "0.0.0.0" else self.host,
                      self.port)
             await asyncio.gather(self.watchdog_task(), self.reconcile_task(),
-                                 self.smeter_task(), self.tx_sensor_task())
+                                 self.smeter_task(), self.tx_sensor_task(),
+                                 self.text_task())
 
 
 async def amain(args) -> None:

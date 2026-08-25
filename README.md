@@ -10,7 +10,8 @@ the same port, so a phone on the LAN needs nothing installed.
 
 Working today: full CAT control, RX and TX audio at 48 kHz, CW keying with
 macros, filter and power control, RIT/XIT, S-meter, PTT with a safety
-watchdog, multi-client state broadcast, and a web UI. First on-air CW QSO made through
+watchdog, the radio's own decoded CW/RTTY/PSK text, multi-client state
+broadcast, and a web UI with a tuning wheel. First on-air CW QSO made through
 it on 20 m, and **WSJT-X 3.0.1 runs over TCI** — rig control and audio both,
 no sound-card routing.
 
@@ -86,6 +87,20 @@ software.
 - `MIC+LIN` (menu 015) must be ON, or USB audio never reaches the modulator.
 - CW VOX (`VX1`) must be on, or `KY` text is buffered and never transmitted.
 
+**Text decode is a front-panel setting with no CAT command, and its "off"
+is indistinguishable from silence.** `TB;` reads the K3's decoded text, but
+nothing enables the decoder remotely — hold **TEXT DEC** at the radio and
+select `CW 5-40`. A radio with it switched off answers `TB000;`, which is
+byte for byte what a radio with it on and a quiet band answers. The bridge
+does not guess; the web UI states both possibilities rather than showing an
+empty box that reads as broken.
+
+**`TB`'s decoded text can contain semicolons**, which is what everything
+else on the CAT link uses as its terminator. That is why the reply carries a
+character count, and why it is the one command the reader does not frame on
+`;`. Getting it wrong truncates the text *and* injects the tail into the
+command stream.
+
 **A CAT SET can be dropped silently.** An `MD2;` was ignored with no `?;`
 and no other sign. Anything whose failure corrupts later decisions needs
 set-verify-retry.
@@ -160,9 +175,12 @@ Then open `http://<pi>:50001/`.
 - [`bridge/tciplay.py`](bridge/tciplay.py) — a ~90-line headless listener,
   useful for checking the audio path from another machine.
 
-Any TCI-capable client should work, since the bridge implements the standard
-protocol rather than anything bespoke. Third-party clients are not bundled
-here.
+Any TCI-capable client should work: everything the bridge implements is
+standard TCI, with a single deliberate exception. TCI has no message for
+decoded text, so `rx_text:0,<text>` is the bridge's own — a client that does
+not know it ignores it, which is why it rides the existing socket instead of
+a second channel. Nothing else on the wire is bespoke. Third-party clients
+are not bundled here.
 
 ---
 

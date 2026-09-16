@@ -176,6 +176,7 @@ class Bridge:
         self._cw_thread: threading.Thread | None = None
         self._cw_wpm_now = 20
         self._cw_keyed = False
+        self._keyed_at = 0.0
 
     @property
     def ptt_owner(self):
@@ -461,12 +462,16 @@ class Bridge:
         if self.ptt_line:
             self.cat.set_ptt_line(True)
             if self._await_tq(True):
+                self._keyed_at = time.monotonic()
                 return True
             log.warning("RTS did not key the radio -- is its RS232 menu set "
                         "to RTS=PTT? falling back to TX;")
             self.cat.set_ptt_line(False)
         self.cat.send("TX")
-        return self._await_tq(True)
+        ok = self._await_tq(True)
+        if ok:
+            self._keyed_at = time.monotonic()
+        return ok
 
     def _key_off(self) -> None:
         """Unkey by BOTH routes, every time, whatever keyed it.
@@ -962,6 +967,15 @@ class Bridge:
         if dropped:
             log.info("cw: stop -- %d chunk(s) abandoned unsent", dropped)
         self._key_off()
+        # The `RX;` that stop just sent is deferred behind whatever the
+        # radio is still playing, exactly like the one at the end of an
+        # ordinary message -- so it can go missing the same way and needs
+        # the same backstop. Sized to what the radio can still be holding:
+        # a stop abandons everything not yet written, so that is bounded by
+        # the last chunk or two rather than by the whole message.
+        if self.state.transmitting:
+            self._ptt_deadline = time.monotonic() + cw_seconds(
+                "x" * (2 * self.CW_MAX), self._cw_wpm_now)
 
     def _cw_worker(self) -> None:
         """Write queued chunks, pacing each against the radio's buffer.
@@ -1353,9 +1367,22 @@ class Bridge:
 
         Called from wherever the radio's own transmit state is read.
         """
-        if self._ptt_deadline is not None and not self.state.transmitting:
-            self._ptt_deadline = None
-            self._ptt_owner = None
+        if self.state.transmitting:
+            return
+        # A snapshot read while we were keying can report the state from
+        # just before it, so a moment's grace after keying keeps an IF that
+        # was already in flight from disarming a transmission that has only
+        # just started.
+        if time.monotonic() - self._keyed_at < 2.0:
+            return
+        self._ptt_deadline = None
+        # AND THE OWNER, which used to be cleared only alongside a deadline.
+        # A CW stop leaves no deadline to clear, so the owner outlived the
+        # transmission: disconnecting minutes later logged "PTT owner
+        # disconnected while keyed -- unkeying" at a radio that had been
+        # receiving the whole time, and sent it a pointless RX. Nobody holds
+        # PTT on a radio that is not transmitting.
+        self._ptt_owner = None
 
     def ptt_watchdog(self) -> str | None:
         """Force RX if a client keyed us and then went away. This is the one

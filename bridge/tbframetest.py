@@ -380,6 +380,24 @@ def main():
         b.on_cat_event(msg)
         check(label, b._ptt_deadline, want, fails)
 
+    # The owner goes with it. A CW stop leaves no deadline to clear, so the
+    # owner used to outlive the transmission -- and disconnecting minutes
+    # later logged "PTT owner disconnected while keyed" at a radio that had
+    # been receiving throughout, and sent it a pointless RX.
+    b = tci.Bridge(StubCat(None))
+    b._ptt_owner = "someone"
+    b.on_cat_event(RX_IF)
+    check("radio seen receiving: owner released", b._ptt_owner, None, fails)
+
+    # But not in the moment just after keying, where an IF already in flight
+    # can report the state from before it.
+    b = tci.Bridge(StubCat(None))
+    b._ptt_owner, b._ptt_deadline = "someone", 1234.0
+    b._keyed_at = time.monotonic()
+    b.on_cat_event(RX_IF)
+    check("a stale snapshot does not disarm a fresh transmission",
+          (b._ptt_owner, b._ptt_deadline), ("someone", 1234.0), fails)
+
     print("\n=== the CW watchdog estimate covers the message ===")
     # Too long only delays a backstop that should never fire; too short cuts
     # the operator off mid-word. So it must exceed PARIS timing at any speed

@@ -90,6 +90,67 @@ That also retires the worry about the CE-4000's unknown level accuracy: the
 P3 tracks it across 52 dB, which bounds the generator's error far better
 than a specification sheet would.
 
+### What the full 14 MHz sweep does and does not show
+
+`smcal2-14mhz.csv` is the sweep from -100 to -15 dBm, committed verbatim.
+Read it with one fact in front of you: **its level column is what the
+script suggested, not what anything measured.** Every `entered` value is
+the computed target to the last float digit, meaning Enter was pressed at
+each point, and there is no `p3_dbm` column. The partial run had the P3
+reading at every point and came out clean. This one was run without that
+control, and its three problems are exactly the kind the control exists to
+catch.
+
+Run through `--fit` unedited, it reports a single line with 7 dB rms
+residual and declares the break at SMH 40 *"doing work"*. Do not believe
+that verdict. The outliers produce it.
+
+**The middle is consistent with the partial run.** From -85 to -45 dBm every
+point falls within about 2 counts of the P3-verified partial fit
+(`dBm = -118.64 + 1.2338*n`), and -85 to -70 on its own refits to
+`-118.86 + 1.2346*n`, within 0.2 dB of it. It carries on across SMH 40 with
+no visible change of slope up to about SMH 62. So the documented break at 40
+*may* not exist on this radio. That is a suggestion from unverified points,
+not a finding.
+
+**The bottom three read about 15 dB high.** -100, -95 and -90 dBm read SMH
+30, 31 and 39. The fit wants 15, 19 and 23. Inverted through the fit, they
+look like -82, -81 and -71 dBm arriving at the radio. The noise-floor step
+just before read SMH 0, so it is not RF GAIN left down and not a floor
+problem. The likeliest story is a generator that was not at the level
+requested, e.g. an attenuator range not switched back after the floor step.
+The data alone cannot say.
+
+**There is a 14.5-count jump between -40 and -35 dBm**, for 5 dB of input,
+and above it the points sit about 11 counts above the line. No receiver
+behaviour explains that. It looks like a step in the generator's output
+range.
+
+**-15 dBm reads lower than -20 dBm** (86.5 against 94). That is either the
+generator's top end or the receiver starting to compress. The P3 tells
+those apart and the SMH count cannot.
+
+The half-count readings (64.5 at -40, 89.5 at -25, 86.5 at -15) mean the
+12 reads straddled two values. The meter was bouncing at the same points
+that misbehave.
+
+**Consequence: `bridge/tci.py` and the S-meter spec in
+`k3-tci-command-map.md` stay unchanged.** The hold was for want of the top
+half. It now stands because the top half exists but its levels are
+unverified. `smcal2.py` now prompts for the P3 reading at every point,
+records it as `p3_dbm`, and leaves any point that disagrees by more than
+1.5 dB out of the fit, so the control no longer depends on someone
+remembering it. The next step is a short re-measure of the suspect levels
+with the P3 read at each:
+
+```
+python3 smcal2.py --levels -100,-95,-90,-40,-35,-15 --out smcal2-retest.csv
+```
+
+If the P3 agrees with the generator and the counts repeat, the meter really
+does that and it is a finding. If the P3 disagrees, those rows were
+generator artifacts and the rest of the sweep is usable as it stands.
+
 ## The pattern worth copying
 
 Every one of these runs its controls first and aborts if the controls fail.

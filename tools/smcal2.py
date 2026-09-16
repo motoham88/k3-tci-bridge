@@ -53,6 +53,10 @@ PORT = "/dev/k3cat"
 # these means the reply was not what we think it was, not a huge signal.
 SMH_MAX, SM_MAX = 140, 21
 
+# How far the P3 may disagree with the generator before a point is presumed
+# to be at the wrong level. The two agreed within 0.01 dB at -73 and -125.
+P3_TOL = 1.5
+
 # State pinned for the run, saved and put back afterwards.
 SAVE = ("PA", "RA", "GT", "FA", "MD")
 
@@ -192,6 +196,15 @@ def fit(points, floor_smh, floor_sm):
             ("smh", floor_smh, 40, 40, "SMH"),
             ("sm", floor_sm, 9, 9, "SM")):
         pts = [p for p in points if p.get(key) is not None]
+
+        # A point the P3 contradicts measured something other than its stated
+        # level. Runs without a p3_dbm column pass through untouched.
+        bad = [p for p in pts if p.get("p3_dbm") is not None
+               and abs(p["p3_dbm"] - p["dbm"]) > P3_TOL]
+        if bad:
+            print(f"\n{key.upper()}: excluding {len(bad)} point(s) the P3 "
+                  f"contradicts: " + ", ".join(f"{p['dbm']:.0f}" for p in bad))
+            pts = [p for p in pts if p not in bad]
 
         # Drop anything sitting in the receiver's own noise. Below about two
         # counts above the measured floor the meter is reading the radio,
@@ -335,9 +348,20 @@ def sweep(ser, args):
     print(f"\n  {'target':>10} {'entered':>10} {'dBm':>8} {'SM':>6} "
           f"{'SMH':>6} {'SM->dBm':>9} {'SMH->dBm':>9} {'SMH err':>8}")
 
+    # --levels replaces the even sweep with named points, for re-measuring
+    # the few that misbehaved without walking the whole range again.
+    if args.levels:
+        levels = [float(v) for v in args.levels.split(",")]
+    else:
+        levels, v = [], args.start
+        while v <= args.stop + 1e-9:
+            levels.append(v)
+            v += args.step
+
     points = []
-    level = args.start
-    while level <= args.stop + 1e-9:
+    i = 0
+    while i < len(levels):
+        level = levels[i]
         if args.units == "uv":
             tgt = dbm_to_uv(level, args.emf)
             shown = f"{tgt:.4g} uV"
@@ -353,7 +377,7 @@ def sweep(ser, args):
         if s == "q":
             break
         if s == "s":
-            level += args.step
+            i += 1
             continue
         if s:
             try:
@@ -382,11 +406,30 @@ def sweep(ser, args):
               f"{col(p_sm, 9, '>9.1f')} {col(p_smh, 9, '>9.1f')} "
               f"{col(err, 8, '>+8.1f')}")
 
+        # The independent control. The partial run had it and was clean; the
+        # full sweep was run without it and its level column is only what the
+        # script SUGGESTED, so its outliers could not be told apart from a
+        # generator that was not where it was asked to be.
+        p3 = None
+        while True:
+            t = input("    P3 reads (dBm, blank = no reading): ").strip()
+            if not t:
+                break
+            try:
+                p3 = float(t)
+                break
+            except ValueError:
+                print("    not a number; try again")
+        if p3 is not None and abs(p3 - actual) > P3_TOL:
+            print(f"    P3 DISAGREES by {p3 - actual:+.1f} dB -- the generator "
+                  f"is not at {actual:.1f} dBm.\n    Kept in the file, "
+                  f"excluded from the fit.")
+
         points.append({"requested": level, "dbm": actual,
                        "entered": entered, "units": args.units,
                        "sm": sm, "smh": smh, "n_sm": nsm, "n_smh": nsmh,
-                       "pred_sm": p_sm, "pred_smh": p_smh})
-        level += args.step
+                       "pred_sm": p_sm, "pred_smh": p_smh, "p3_dbm": p3})
+        i += 1
 
     return points
 
@@ -485,6 +528,9 @@ def main():
                          "when the generator is dialled in uV)")
     ap.add_argument("--stop", type=float, default=-20.0, help="in dBm")
     ap.add_argument("--step", type=float, default=5.0, help="in dB")
+    ap.add_argument("--levels", metavar="DBM,DBM,...",
+                    help="measure only these levels, in order, instead of "
+                         "the --start/--stop/--step sweep")
     ap.add_argument("--units", choices=("uv", "dbm"), default="uv",
                     help="what the generator's front panel reads. The "
                          "CE-4000 at this station reads microvolts.")

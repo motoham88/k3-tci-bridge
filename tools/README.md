@@ -97,10 +97,11 @@ Its `entered` column is the script's suggested level at every point, because
 Enter was pressed each time, and the file has no `p3_dbm` column. That looks
 like an unverified run, but it is not. **The P3 was the reference.** The
 CE-4000 struggled to make some levels, so the operator raised its output
-until the P3 read each 5 dB step, from -100 up to -25 dBm. The level column
-is therefore P3-measured through -25. Only **-20 and -15 dBm were not
-checked**. This comes from the bench notes, not the file, and the P3 values
-were not typed in. `smcal2.py` now prompts for them so the file carries the
+until the P3 read each 5 dB step. The level column is therefore P3-measured
+from -100 up to at least -25 dBm. The operator recalls the last P3 check as
+-25 but is not sure it was not -15, so **-20 and -15 may be unchecked**.
+This comes from recollection the morning after, not the file, and the P3
+values were not typed in. `smcal2.py` now prompts for them so the file carries the
 control itself next time.
 
 Run through `--fit` unedited, it reports a single line with 7 dB rms
@@ -129,12 +130,17 @@ coaxing.
 confirmed on the P3, and above it the points sit about 11 counts above the
 line. The same slow-AGC hold is one candidate. It is unexplained.
 
-**-15 dBm reads lower than -20 dBm** (86.5 against 94). Neither level was
-checked on the P3. Treat both as unverified.
+**The top two or three steps are contaminated.** The operator recalls the
+K3's overload protection relay pulling in at the highest levels, around the
+last two or three steps (-25, -20, -15 dBm). Once it pulls in, the receiver
+no longer sees the generator's full level. That explains -15 dBm reading
+*lower* than -20 (86.5 against 94). Those points measure the protection,
+not the meter, so leave them out of any fit, whatever the P3 read.
 
 The half-count readings (64.5 at -40, 89.5 at -25, 86.5 at -15) mean the
 12 reads straddled two values. The meter was still moving at the same
-points that misbehave, which fits a settle that was too short.
+points that misbehave. At -40 that fits a settle that was too short. At -25
+and -15 it fits the relay pulling in during the reads.
 
 **Consequence: `bridge/tci.py` and the S-meter spec in
 `k3-tci-command-map.md` stay unchanged.** `smcal2.py` now prompts for the P3
@@ -147,6 +153,11 @@ time to decay:
 python3 smcal2.py --agc GT004 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-slow.csv
 python3 smcal2.py --agc GT002 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-fast.csv
 ```
+
+Listen for the protection relay at -20 and -15 dBm, and note which levels
+trip it. The script cannot see it, and a tripped point gets left out of the
+fit. If it trips, the usable top of the calibration is the highest level
+below that.
 
 If the bottom points come down to about SMH 15-23 with the longer settle,
 the sweep's outliers were AGC hold and the rest of it stands. If they

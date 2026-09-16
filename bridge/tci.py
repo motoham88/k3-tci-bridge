@@ -739,6 +739,54 @@ class Bridge:
     # which matters because a speed change queued behind a message must not
     # overtake it.
     CW_MAX = 24
+    # How long to wait for the buffer to report room before writing anyway.
+    CW_WAIT_S = 3.0
+
+    def _cw_chunks(self, text: str) -> list[str]:
+        """Split text into KY payloads, each at most CW_MAX characters.
+
+        Returns them ready to write, SPACES INCLUDED, so that joining the
+        payloads reproduces the text exactly. Two bugs live in that seam,
+        and carrying the space here is what closes both.
+
+        THE SPACE IS PART OF THE BUDGET. A chunk that is followed by another
+        carries the space that keeps the words apart, and appending it to a
+        chunk of exactly CW_MAX made a 25-character payload -- one past the
+        documented limit, with the radio left to decide what to do about the
+        overrun. So a chunk that will carry a space is built one character
+        shorter. Building EVERY chunk shorter would split a 24-character
+        message that fits perfectly well in one command, so a text within
+        the limit is always a single chunk.
+
+        A SPLIT INSIDE A WORD CARRIES NO SPACE. A word too long to fit any
+        chunk has to be cut somewhere, and the old code appended the
+        separator there too -- putting a space in the middle of the word and
+        sending it as two. The separator belongs at word boundaries only.
+        """
+        if len(text) <= self.CW_MAX:
+            return [text] if text else []
+        budget = self.CW_MAX - 1            # room for the trailing space
+        out, cur = [], ""
+        for word in text.split(" "):
+            # A word longer than a whole chunk: cut it, and do not let a
+            # separator into the cut.
+            while len(word) > self.CW_MAX:
+                if cur:
+                    out.append(cur + " ")
+                    cur = ""
+                out.append(word[:self.CW_MAX])
+                word = word[self.CW_MAX:]
+            piece = (cur + " " + word) if cur else word
+            if len(piece) <= budget:
+                cur = piece
+            elif cur:
+                out.append(cur + " ")
+                cur = word
+            else:
+                cur = word
+        if cur:
+            out.append(cur)
+        return out
 
     def _cw_send(self, text: str) -> bool:
         """Feed text to the K3's CW buffer, chunked and flow-controlled.
@@ -761,21 +809,7 @@ class Bridge:
             log.info("enabling CW VOX (VX1) -- required for KY keying")
             self.cat.set_verified("VX1", "VX", "VX1;")
         text = text.replace("\n", " ")
-        chunks, cur = [], ""
-        for word in text.split(" "):
-            piece = (cur + " " + word) if cur else word
-            if len(piece) <= self.CW_MAX:
-                cur = piece
-            else:
-                if cur:
-                    chunks.append(cur)
-                # a single word longer than the limit: hard-split it
-                while len(word) > self.CW_MAX:
-                    chunks.append(word[:self.CW_MAX])
-                    word = word[self.CW_MAX:]
-                cur = word
-        if cur:
-            chunks.append(cur)
+        chunks = self._cw_chunks(text)
 
         # INSTRUMENTATION, while the dropped-first-character report is open.
         # Nothing about that failure is visible after the fact: the message
@@ -788,16 +822,29 @@ class Bridge:
         log.info("cw: text=%r chunks=%r tq=%s vx=%s",
                  text, chunks, self.cat.ask("TQ"), vx)
         for i, chunk in enumerate(chunks):
-            waited = 0.0
-            while self.cat.ask("KY") == "KY1;" and waited < 20.0:
+            # Only `KY0;` is room. The test used to be `== "KY1;"`, which
+            # reads every OTHER answer as a clear buffer -- including the
+            # ones that are not answers at all: a timeout, or the `?;` of a
+            # radio too busy to say. Those are exactly when the buffer is
+            # most likely to be full, and writing into it is how the middle
+            # of a message goes missing.
+            #
+            # But an unanswered poll must not stop the message either: the
+            # `W` form defers following commands until what is already
+            # queued has been sent, so a poll CAN legitimately go unanswered
+            # for as long as the radio takes to key it. So an unknown answer
+            # waits, and then writes anyway and says so, rather than
+            # discarding the rest of what the operator asked to send.
+            waited, ky = 0.0, self.cat.ask("KY")
+            while ky != "KY0;" and waited < self.CW_WAIT_S:
                 time.sleep(0.15)
                 waited += 0.15
-            if waited >= 20.0:
-                log.warning("CW buffer stayed full; dropping the rest")
-                return False
-            # Trailing space between chunks so words do not run together.
-            tail = " " if i < len(chunks) - 1 else ""
-            out = "KYW" + chunk + tail
+                ky = self.cat.ask("KY")
+            if ky != "KY0;":
+                log.warning("CW buffer not confirmed clear after %.1fs "
+                            "(last answer %r) -- writing chunk %d anyway",
+                            waited, ky, i + 1)
+            out = "KYW" + chunk      # the chunk already carries its space
             log.info("cw: write %d/%d after %.2fs wait: %r",
                      i + 1, len(chunks), waited, out)
             self.cat.send(out)

@@ -249,6 +249,43 @@ def main():
         check(f"too short to read ({label}): ignored",
               (b.on_cat_event(msg), b.state.vfo_a), ([], 1), fails)
 
+    print("\n=== KY chunks leave room for the space that follows them ===")
+    # Every chunk but the last is written with a trailing space, so that
+    # words do not run together across a boundary -- which means the space
+    # is part of KY's 24-character budget, not an extra. A 24-character
+    # chunk plus that space is a 25-character command, and what the radio
+    # does with the overrun is its business, not something to find out on
+    # the air. The first case below produced exactly that.
+    b = tci.Bridge(StubCat(None))
+    for label, text, want in [
+        ("chunk that used to overrun", "testing a word or two of cw",
+         ["testing a word or two ", "of cw"]),
+        ("fits exactly, stays whole", "x" * 24, ["x" * 24]),
+        ("one past, splits",          "x" * 25, ["x" * 24, "x"]),
+        # A word too long to fit anywhere is cut, and no separator goes into
+        # the cut -- the old code put a space there and sent it as two words.
+        ("word longer than a chunk",  "x" * 50,
+         ["x" * 24, "x" * 24, "x" * 2]),
+        # The remainder of a cut word packs with what follows it, so the
+        # space reappears where it belongs -- at the word boundary.
+        ("cut word, then a real one", "x" * 30 + " de",
+         ["x" * 24, "x" * 6 + " de"]),
+        ("nothing to send",           "", []),
+    ]:
+        check(label, b._cw_chunks(text), want, fails)
+
+    # The two invariants behind all of them: no payload is over the limit,
+    # and joining them reproduces the text exactly -- spaces included, which
+    # is the whole point of carrying the separator inside the chunk.
+    for text in ["cq cq de kx3h k", "x" * 24, "x" * 71,
+                 "testing a word or two of cw from here",
+                 "x" * 30 + " de kx3h", " ".join(["word"] * 30)]:
+        chunks = b._cw_chunks(text)
+        check(f"payload width within {tci.Bridge.CW_MAX} for {text[:18]!r}",
+              max((len(c) for c in chunks), default=0) <= tci.Bridge.CW_MAX,
+              True, fails)
+        check(f"nothing lost for {text[:18]!r}", "".join(chunks), text, fails)
+
     print("\n=== an S-meter count is range-checked before it is a signal ===")
     # Both curves are unbounded above -- SMH 999 converts to +853 dBm -- and
     # the UI clamps its bar at S9+60, so ANY over-range count paints the

@@ -716,7 +716,20 @@ class Bridge:
             self.cat.send("SWH16" if on else "RX")
             time.sleep(0.2)
             tq = self.cat.ask("TQ")
-            return [], [f"tune:0,{bool_str(tq == 'TQ1;')}"]
+            # TUNE radiates, so it IS transmitting, and the state has to say
+            # so. It did not: for the 2.5 s of an ATU tune the bridge
+            # believed it was receiving, so the S-meter and decoded-text
+            # loops -- both gated on this flag -- went on polling a radio
+            # with the carrier up. That is the exact condition the reference
+            # warns about and that dropped this radio out of TX on the
+            # bench, and what the meter reads mid-carrier is not a signal.
+            #
+            # It also puts TUNE under the same safety net as PTT: force_rx
+            # on the last client leaving tests this flag, so a client that
+            # dies mid-tune no longer leaves the radio holding a carrier.
+            self.state.transmitting = (tq == "TQ1;")
+            return [], [f"tune:0,{bool_str(self.state.transmitting)}",
+                        f"trx:0,{bool_str(self.state.transmitting)}"]
         return [f"tune:0,{bool_str(self.state.transmitting)}"], []
 
     # -- CW keying --------------------------------------------------------
@@ -1010,9 +1023,8 @@ class Bridge:
         """
         r = self.cat.ask("SMH")
         if r and r.startswith("SMH") and len(r) >= 7:
-            try:
-                n = int(r[3:6])
-            except ValueError:
+            n = self._meter_count(r, r[3:6], self.SMH_MAX)
+            if n is None:
                 return None
             # anchors: S1=5, S9=40, S9+60=100
             if n <= 40:
@@ -1020,15 +1032,47 @@ class Bridge:
             return int(round(-73 + (n - 40)))
         r = self.cat.ask("SM")
         if r and r.startswith("SM") and len(r) >= 7:
-            try:
-                n = int(r[2:6])
-            except ValueError:
+            n = self._meter_count(r, r[2:6], self.SM_MAX)
+            if n is None:
                 return None
             # K31 scale: 0000-0021, S9=9, then 5 dB per step above it
             if n <= 9:
                 return int(round(-73 - 6 * (9 - n)))
             return int(round(-73 + 5 * (n - 9)))
         return None
+
+    # Documented full-scale counts: SMH 0-140, and SM 0-21 under K31 (its
+    # range changes with K2x while the field stays four digits, so a reading
+    # above 21 is also how a lost K31 would show itself).
+    SMH_MAX, SM_MAX = 140, 21
+
+    def _meter_count(self, reply: str, digits: str, top: int) -> int | None:
+        """Parse an S-meter count, or None if it is not a reading.
+
+        RANGE-CHECKED, because nothing downstream can tell a wrong number
+        from a strong signal. Both curves are unbounded above -- SMH 999
+        converts to +853 dBm -- and the UI clamps its bar at S9+60, so ANY
+        over-range count paints exactly the same full-scale meter as a real
+        S9+60 signal. A count out of range means the reply was not what we
+        think it was: a corrupted digit at 38400 baud, a reply framed
+        against the wrong command, or K31 lost (see SM_MAX). None of those
+        should be shown to the operator as a signal.
+
+        The raw reply is logged because this is the only record of it. A
+        pinned meter is over in a fifth of a second and leaves nothing
+        behind; a journal line naming the reply is what makes the next one
+        diagnosable.
+        """
+        try:
+            n = int(digits)
+        except ValueError:
+            log.warning("unparsable S-meter reply %r", reply)
+            return None
+        if not 0 <= n <= top:
+            log.warning("S-meter count %d out of range 0-%d in %r "
+                        "-- discarded", n, top, reply)
+            return None
+        return n
 
     # ---------- background duties ----------
 

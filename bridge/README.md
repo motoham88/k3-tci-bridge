@@ -180,6 +180,22 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - RX audio streaming: `audio_start` / `audio_stop`, float32 stereo at 48 kHz
 - TX audio ingest (float32 and int16), continuous primed playback stream
 - `volume` / `mute` in software, `rx_smeter` at 5 Hz (suppressed in TX)
+
+**An S-meter count is range-checked before it is treated as a signal.** Both
+conversions are unbounded above — `SMH999` converts to +853 dBm — and the UI
+clamps its bar at S9+60, so *any* over-range count paints exactly the same
+full-scale meter as a real S9+60 signal. `SMH` is checked against 0-140 and
+`SM` against 0-21 (its K31 range; the field stays four digits when K31 is
+lost, so an over-range `SM` is also how that would show itself). Anything
+outside is discarded and logged with the raw reply, because a pinned meter
+is over in a fifth of a second and otherwise leaves nothing behind.
+
+**And the bar is cleared when it stops meaning something.** The poll is
+suppressed in TX, so the last reading before the carrier went up was simply
+the last message that ever arrived — and nothing cleared the bar, so it sat
+at that width for the whole over. Key up on a loud station and the meter
+read full scale until you unkeyed. It now clears on key-up and after a
+second without a reading, which also covers a bridge that has gone quiet.
 - Web UI served on the same port (VFO, modes, filter, S-meter, audio, PTT, split)
 - `rx_filter_band` get/set, mode-aware; re-reported on mode change
 - CW keying: `cw_msg` / `cw_macros` (chunked to KY's 24-char limit,

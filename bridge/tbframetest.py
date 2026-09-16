@@ -66,11 +66,15 @@ class FakeSerial:
 class StubCat:
     """Stands in for K3Cat where only a canned reply is needed."""
 
-    def __init__(self, reply):
+    def __init__(self, reply, asks=None):
         self.reply = reply
+        self.asks = asks or {}          # command -> reply, for ask()
 
     def ask_text(self, timeout=0.6):
         return self.reply
+
+    def ask(self, cmd, timeout=0.6):
+        return self.asks.get(cmd.rstrip(";"))
 
 
 def make_cat(chunk=256):
@@ -244,6 +248,30 @@ def main():
         b.state.vfo_a = 1
         check(f"too short to read ({label}): ignored",
               (b.on_cat_event(msg), b.state.vfo_a), ([], 1), fails)
+
+    print("\n=== an S-meter count is range-checked before it is a signal ===")
+    # Both curves are unbounded above -- SMH 999 converts to +853 dBm -- and
+    # the UI clamps its bar at S9+60, so ANY over-range count paints the
+    # same full-scale meter as a real S9+60 signal. Nothing downstream can
+    # tell one from the other, which is why it is caught here: a pinned
+    # meter is over in a fifth of a second and leaves nothing behind.
+    for label, asks, want in [
+        ("SMH at S1",            {"SMH": "SMH005;"}, -121),
+        ("SMH at S9",            {"SMH": "SMH040;"},  -73),
+        ("SMH at S9+60",         {"SMH": "SMH100;"},  -13),
+        ("SMH at full scale",    {"SMH": "SMH140;"},   27),
+        ("SMH over full scale",  {"SMH": "SMH141;"},  None),
+        ("SMH wildly over",      {"SMH": "SMH999;"},  None),
+        ("SMH not a number",     {"SMH": "SMHxyz;"},  None),
+        # SM is only reached when SMH gives nothing at all.
+        ("SM at S9",             {"SM": "SM0009;"},   -73),
+        ("SM at S9+60",          {"SM": "SM0021;"},   -13),
+        # Above SM's K31 range: the field stays four digits when K31 is
+        # lost, so this is also what a radio back in K2x mode looks like.
+        ("SM over its K31 range", {"SM": "SM0022;"},  None),
+    ]:
+        b = tci.Bridge(StubCat(None, asks))
+        check(label, b.read_smeter(), want, fails)
 
     print()
     if fails:

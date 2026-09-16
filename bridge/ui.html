@@ -266,7 +266,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
-            decoded:false };
+            decoded:false, meterSeen:0 };
 const $ = s => document.querySelector(s);
 let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
 
@@ -337,7 +337,7 @@ function onText(msg){
     case "trx":
       S.tx = args[1] === "true"; paintPtt(); break;
     case "rx_smeter":
-      setMeter(+args[1]); break;
+      S.meterSeen = performance.now(); setMeter(+args[1]); break;
     case "tx_sensors": {
       // mic field is the level of the TX audio the bridge is actually
       // receiving from a client and feeding to the radio. Zero while
@@ -626,8 +626,21 @@ function paintFilters(){
 // dBm → bar. S9 = -73 dBm, 6 dB per S-unit below it, so S1 = -121.
 // The bridge's dBm figure is UNCALIBRATED (see the command map), so treat
 // this as relative movement, not an absolute reading.
+// The bridge stops polling the S-meter during transmit -- SM reads 0000
+// there and the reference warns against polling a transmitting radio -- so
+// the last reading before the carrier went up is simply the last message
+// that ever arrives. Nothing cleared the bar, so it SAT at that width for
+// the whole over: key up on a loud station and the meter reads full scale
+// until you unkey, saying nothing true about anything. Same for a bridge
+// that has gone quiet. So the bar is cleared when it stops meaning
+// something, rather than left showing the last thing it meant.
+function clearMeter(why){
+  $("#bar").style.width = "0";
+  $("#sval").textContent = why;
+}
 function setMeter(dbm){
   if (isNaN(dbm)) return;
+  if (S.tx) return;                             // not a signal: see above
   const pct = Math.max(0, Math.min(100, (dbm + 121) / (121 - 13) * 100));
   $("#bar").style.width = pct + "%";
   const over = dbm + 73;
@@ -709,6 +722,12 @@ $("#vol").oninput = e => {
   send(`volume:${e.target.value}`);
 };
 setInterval(() => {
+  // A stale meter is a stopped one: the poll runs at 5 Hz, so anything
+  // older than a second means the bridge is not reporting -- transmitting
+  // from another client, a radio that stopped answering, a socket that has
+  // gone quiet without closing. Any of those, the bar is a leftover.
+  if (!S.tx && S.meterSeen && performance.now() - S.meterSeen > 1200)
+    clearMeter("—");
   if (!S.audio) return;
   const stale = performance.now() - lastFrame;
   $("#astat").textContent = stale < 500 ? `${frames} frames` : "stalled";
@@ -740,7 +759,9 @@ function paintPtt(){
   ptt.classList.toggle("tx", S.tx);
   ptt.textContent = S.tx ? "● TRANSMITTING" : "PTT — HOLD";
   $("#txpanel").classList.toggle("live", S.tx);
+  if (S.tx) clearMeter("TX");
   if (!S.tx){
+    clearMeter("—");                            // until the next poll lands
     $("#txbar").style.width = "0";
     $("#alcbar").style.width = "0";
     $("#txstat").textContent = "idle";

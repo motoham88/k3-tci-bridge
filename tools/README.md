@@ -126,9 +126,15 @@ each level could leave the meter still holding a stronger level when the
 points that went wrong at the bottom, where the generator needed the most
 coaxing.
 
-**There is a 14.5-count jump between -40 and -35 dBm**, for 5 dB of input
-confirmed on the P3, and above it the points sit about 11 counts above the
-line. The same slow-AGC hold is one candidate. It is unexplained.
+**There is a 14.5-count jump between -40 and -35 dBm**, for a nominal 5 dB
+of input, and above it the points sit about 11 counts above the line. The
+operator's judgement is **generator level error**: the CE-4000 is old, and it
+was already struggling to make some levels during this run. That means the
+level actually delivered at -35 and up was higher than the column says.
+It sits awkwardly with the P3 having been the reference, since a P3 matched
+at each step would have caught it. So either that step was not matched on
+the P3, or the P3 reading was taken before the level settled. The retest
+records the P3 value in the file, which will show which.
 
 **The top two or three steps are contaminated.** The operator recalls the
 K3's overload protection relay pulling in at the highest levels, around the

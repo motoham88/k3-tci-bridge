@@ -777,6 +777,16 @@ class Bridge:
         if cur:
             chunks.append(cur)
 
+        # INSTRUMENTATION, while the dropped-first-character report is open.
+        # Nothing about that failure is visible after the fact: the message
+        # is on the air and gone, and the only record of what the bridge
+        # actually wrote is this. It says whether the first character left
+        # here at all -- which splits the bug in half. If the text logged is
+        # complete, nothing downstream of the serial port dropped it and the
+        # character was lost in the radio or in T/R switching; if it is
+        # short, it never left.
+        log.info("cw: text=%r chunks=%r tq=%s vx=%s",
+                 text, chunks, self.cat.ask("TQ"), vx)
         for i, chunk in enumerate(chunks):
             waited = 0.0
             while self.cat.ask("KY") == "KY1;" and waited < 20.0:
@@ -787,7 +797,10 @@ class Bridge:
                 return False
             # Trailing space between chunks so words do not run together.
             tail = " " if i < len(chunks) - 1 else ""
-            self.cat.send("KYW" + chunk + tail)
+            out = "KYW" + chunk + tail
+            log.info("cw: write %d/%d after %.2fs wait: %r",
+                     i + 1, len(chunks), waited, out)
+            self.cat.send(out)
         return True
 
     def _cmd_cw_msg(self, args):

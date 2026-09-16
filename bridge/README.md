@@ -35,21 +35,40 @@ socket from an `https://` page, and there is no second server to run.
 `process_request` checks for an `Upgrade: websocket` header and hands those
 requests to the WebSocket handler; everything else gets the page.
 
-Works on a phone on the same LAN. Frequency is tuned three ways: click or
-scroll the upper/lower half of any digit, use the step buttons, or drag the
-tuning wheel at 1 Hz / 10 Hz / 100 Hz / 1 kHz per tick. They complement each
-other — the digits are exact, the wheel is fast.
+Works on a phone on the same LAN. Frequency is tuned three ways: click the
+upper/lower half of any digit, use the step buttons, or drag the tuning
+wheel at 1 Hz / 10 Hz / 100 Hz / 1 kHz per tick. They complement each other
+— the digits are exact, the wheel is fast.
+
+**Scrolling never tunes, deliberately.** It used to: a mouse wheel over a
+digit stepped that decade, and over the strip it tuned at the selected rate.
+Both are removed. A scroll is not reliably a decision — an inertial trackpad
+keeps sending wheel events after the fingers have left it, and a page scroll
+that happens to pass over the display was swallowed and tuned the radio
+instead of scrolling. Either way the frequency walks with nothing on screen
+to say why, which is how it was reported: the display drifting on its own.
+Every remaining path to the VFO is a press or a drag, and neither coasts.
+For the same reason the strip is `touch-action:pan-y` rather than `none`,
+and a drag on it turns nothing until it is plainly horizontal: a finger
+coming down there on the way to scrolling the page gets its scroll.
 
 **The wheel throttles its sends, and has to.** Every `vfo` SET costs the
 bridge a write, a 120 ms settle and a read-back with a 1 s timeout, all
 under the lock that serialises *every* client's commands — PTT included. A
 drag generates events far faster than that, so the UI keeps one send in
 flight plus one queued and drops the rest; each carries an absolute
-frequency, so the dropped ones lose nothing. Read-backs are ignored while
-the wheel is moving (they arrive behind the finger and would drag the
-display backwards), and one `vfo` GET is issued on release to resync —
+frequency, so the dropped ones lose nothing. Read-backs are ignored for
+400 ms after *any* local step — they arrive behind the operator and would
+drag the display backwards — and one `vfo` GET at the end of that resyncs,
 which is also what corrects the display when the radio clamps at a band
-edge.
+edge. A continuing drag pushes that deadline out ahead of itself, so one
+timer covers a single button press and a long turn of the wheel alike.
+
+The hold covers the digit steppers and the step buttons too, not only the
+wheel. The 3 s reconcile sweep and the unsolicited `IF` both broadcast
+`vfo` regardless of what the operator is doing, and one landing in the
+120 ms between a step and its read-back repainted the display with the
+frequency from *before* the step.
 
 Confirmed on the air: dragging the wheel with a second client connected
 does not stall that client — its commands keep landing throughout. That is

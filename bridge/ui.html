@@ -45,7 +45,10 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #wheel{
   position:relative; height:46px; margin-top:10px; border-radius:8px;
   border:1px solid var(--line); background-color:var(--panel2);
-  cursor:ew-resize; touch-action:none; overflow:hidden;
+  /* pan-y, not none: a vertical swipe that happens to start on the strip
+     is the operator scrolling the page, and swallowing it both refuses the
+     scroll and tunes the radio on the gesture's horizontal wobble. */
+  cursor:ew-resize; touch-action:pan-y; overflow:hidden;
 }
 #ticks{
   position:absolute; inset:0;
@@ -263,7 +266,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
-            tuning:false, decoded:false };
+            decoded:false };
 const $ = s => document.querySelector(s);
 let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
 
@@ -302,13 +305,20 @@ function onText(msg){
     case "ready":   S.ready = true; $("#dot").className = "on"; log("ready"); break;
     case "start":   break;
     case "vfo":
-      // While the wheel is turning, read-backs arrive behind the finger --
+      // While we are stepping, read-backs arrive behind the operator --
       // the bridge is answering a frequency already tuned past, and applying
-      // it would drag the display backwards under the operator. They are
-      // dropped, and endDrag issues one GET afterwards to resync; because
+      // it would drag the display backwards. They are dropped for as long as
+      // the hold lasts, and holdFreq's own GET resyncs afterwards; because
       // the bridge handles commands in order, that GET reports whatever the
       // last SET actually settled on, band-edge clamp included.
-      if (args[1] === "0"){ if (S.tuning) break; S.vfoA = +args[2]; drawFreq(); }
+      //
+      // The hold covers the digit steppers and the +/-100/1k buttons too,
+      // not just the wheel. A reconcile sweep or an unsolicited IF lands
+      // every 3 s regardless of what the operator is doing, and one that
+      // arrives in the 120 ms between a step and its read-back repaints the
+      // display with the frequency from BEFORE the step.
+      if (args[1] === "0"){ if (performance.now() < freqHold) break;
+                            S.vfoA = +args[2]; drawFreq(); }
       else if (args[1] === "1"){ S.vfoB = +args[2]; $("#vfob").textContent = "B  " + fmt(S.vfoB); }
       break;
     case "rx_text":
@@ -402,7 +412,6 @@ function drawFreq(){
     const dn = document.createElement("span"); dn.className = "hit dn";
     up.onclick = e => { e.stopPropagation(); step(+Math.pow(10, decade)); };
     dn.onclick = e => { e.stopPropagation(); step(-Math.pow(10, decade)); };
-    d.onwheel = e => { e.preventDefault(); step((e.deltaY < 0 ? 1 : -1) * Math.pow(10, decade)); };
     d.append(up, dn); el.appendChild(d);
   }
 }
@@ -422,10 +431,28 @@ function sendVfo(){
     if (vfoQueued){ vfoQueued = false; sendVfo(); }
   }, VFO_MIN_MS);
 }
+// The display is painted optimistically, so between a step and the bridge's
+// read-back it is AHEAD of the radio and every `vfo` message on the wire is
+// behind it. Applying one drags the display backwards under the operator --
+// which is what the drift looked like. So read-backs are ignored until the
+// traffic settles, and one GET at the end resyncs; that GET is also what
+// corrects the display when the radio clamps at a band edge.
+//
+// A continuing drag pushes the deadline out ahead of itself, so one timer
+// serves a single button press and a thirty-second turn of the wheel alike.
+const FREQ_SETTLE_MS = VFO_MIN_MS + 280;
+let freqHold = 0, resyncTimer = null;
+function holdFreq(){
+  freqHold = performance.now() + FREQ_SETTLE_MS;
+  clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(() => { freqHold = 0; send("vfo:0,0"); },
+                           FREQ_SETTLE_MS);
+}
 function step(hz){
   S.vfoA = Math.max(0, S.vfoA + hz);
   drawFreq();                                   // optimistic; the bridge
-  sendVfo();                                    // echoes the accepted value
+  holdFreq();                                   // echoes the accepted value
+  sendVfo();
 }
 // ── tuning wheel ──────────────────────────────────────────────────────────
 // Complements the digit stepping rather than replacing it: the digits are
@@ -453,7 +480,13 @@ function paintRates(){
 paintRates();
 
 const wheel = $("#wheel"), ticksEl = $("#ticks");
-let dragId = null, lastX = 0, settleTimer = null;
+// A drag is not a turn until it is plainly horizontal. A finger that comes
+// down here on the way to scrolling the page would otherwise tune the radio
+// on its sideways wobble before the browser claims the gesture for the
+// scroll -- a few hundred Hz, unasked for, with nothing on screen to say
+// where it came from.
+const ENGAGE_PX = 6;
+let dragId = null, lastX = 0, startX = 0, startY = 0, engaged = false;
 
 function turn(dx){
   tickOffset += dx;
@@ -468,37 +501,37 @@ function turn(dx){
 
 wheel.addEventListener("pointerdown", e => {
   if (dragId !== null) return;
-  dragId = e.pointerId; lastX = e.clientX; tickAcc = 0;
-  wheel.setPointerCapture(dragId);
-  wheel.classList.add("live");
-  clearTimeout(settleTimer);
-  S.tuning = true;
+  // Nothing is captured and nothing lights up yet: this may still turn out
+  // to be a page scroll, and taking the pointer now would stop it being one.
+  dragId = e.pointerId; startX = lastX = e.clientX; startY = e.clientY;
+  engaged = false; tickAcc = 0;
 });
 wheel.addEventListener("pointermove", e => {
   if (e.pointerId !== dragId) return;
+  if (!engaged){
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    // Mostly vertical: leave it alone. touch-action:pan-y means the browser
+    // takes the gesture for the page and sends us a pointercancel.
+    if (Math.abs(dy) >= Math.abs(dx) || Math.abs(dx) < ENGAGE_PX) return;
+    engaged = true;
+    wheel.setPointerCapture(dragId);
+    wheel.classList.add("live");
+    lastX = e.clientX;                 // turn from here, not from the deadzone
+  }
   const dx = e.clientX - lastX;
   lastX = e.clientX;
   turn(dx);
 });
 function endDrag(e){
   if (e.pointerId !== dragId) return;
-  dragId = null;
+  dragId = null; engaged = false;
   wheel.classList.remove("live");
-  // Long enough for the one send that may still be queued to go out. The
-  // GET then queues behind it at the bridge, which handles commands in
-  // order -- so it answers with the frequency that SET settled on, and the
-  // display corrects itself if the radio clamped at a band edge.
-  clearTimeout(settleTimer);
-  settleTimer = setTimeout(() => { S.tuning = false; send("vfo:0,0"); },
-                           VFO_MIN_MS + 280);
+  // No resync of its own: the last step's hold already schedules one, far
+  // enough out for the send that may still be queued to go first. The GET
+  // queues behind it at the bridge, which handles commands in order.
 }
 wheel.addEventListener("pointerup", endDrag);
 wheel.addEventListener("pointercancel", endDrag);
-// A mouse wheel over the strip tunes too, at the selected rate.
-wheel.addEventListener("wheel", e => {
-  e.preventDefault();
-  step((e.deltaY < 0 ? 1 : -1) * wheelStep);
-}, {passive:false});
 
 // ── decoded text ──────────────────────────────────────────────────────────
 const dec = $("#decode");

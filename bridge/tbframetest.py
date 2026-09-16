@@ -69,12 +69,21 @@ class StubCat:
     def __init__(self, reply, asks=None):
         self.reply = reply
         self.asks = asks or {}          # command -> reply, for ask()
+        self.sent = []                  # every SET, in order
+        self.rts = False                # the PTT line, as the radio sees it
 
     def ask_text(self, timeout=0.6):
         return self.reply
 
-    def ask(self, cmd, timeout=0.6):
+    def ask(self, cmd, timeout=0.6, quiet=False):
         return self.asks.get(cmd.rstrip(";"))
+
+    def send(self, cmd):
+        self.sent.append(cmd)
+
+    def set_ptt_line(self, on):
+        self.rts = on
+        self.sent.append(f"<rts {'up' if on else 'down'}>")
 
 
 def make_cat(chunk=256):
@@ -285,6 +294,38 @@ def main():
               max((len(c) for c in chunks), default=0) <= tci.Bridge.CW_MAX,
               True, fails)
         check(f"nothing lost for {text[:18]!r}", "".join(chunks), text, fails)
+
+    print("\n=== keying by line, and coming back from it ===")
+    # The line is worth having because it fails safe -- it drops when this
+    # process dies, where TX; needs something alive to send RX;. But a radio
+    # whose RS232 menu is not set to PTT ignores RTS completely and says
+    # nothing, so an unconfirmed line must fall back to TX; rather than be
+    # trusted: the bridge would otherwise report transmitting, the client
+    # would send audio, and nothing would go out.
+    KEYED, UNKEYED = {"TQ": "TQ1;"}, {"TQ": "TQ0;"}
+
+    b = tci.Bridge(StubCat(None, KEYED), ptt_line=True)
+    check("line keys, and no TX; is needed",
+          (b._key_on(), b.cat.sent), (True, ["<rts up>"]), fails)
+
+    # A radio that ignores the line never reaches TQ1, so TX; must follow.
+    b = tci.Bridge(StubCat(None, UNKEYED), ptt_line=True)
+    check("line ignored: falls back to TX;",
+          (b._key_on(), b.cat.sent),
+          (False, ["<rts up>", "<rts down>", "TX"]), fails)
+
+    b = tci.Bridge(StubCat(None, KEYED), ptt_line=False)
+    check("line mode off: TX; only",
+          (b._key_on(), b.cat.sent), (True, ["TX"]), fails)
+
+    # Unkeying takes BOTH routes whatever keyed it. Dropping an unused line
+    # costs nothing and RX; into a receiving radio costs nothing, while
+    # getting it wrong costs a transmitter left running.
+    for label, line in [("line mode", True), ("CAT mode", False)]:
+        b = tci.Bridge(StubCat(None, UNKEYED), ptt_line=line)
+        b._key_off()
+        check(f"unkey drops the line and sends RX ({label})",
+              b.cat.sent, ["<rts down>", "RX"], fails)
 
     print("\n=== the PTT deadline does not outlive the transmission ===")
     # The CW path arms the watchdog in case its queued RX; goes missing.

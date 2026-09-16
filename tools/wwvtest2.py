@@ -17,7 +17,7 @@ import time
 import wave
 
 import numpy as np
-import serial
+import k3serial
 
 PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AL047393-if00-port0"
 ALSA = "hw:2,0"
@@ -106,7 +106,7 @@ def look(ser, dial, targets, label, settle=1.4):
 
 
 def main():
-    ser = serial.Serial(PORT, 38400, timeout=0.5)
+    ser = k3serial.open_k3(PORT)
     time.sleep(0.2)
     ask(ser, "K31", wait=0.3)
     saved = {c: ask(ser, c) for c in ("FA", "MD", "DT", "BW", "IS")}

@@ -51,3 +51,14 @@ conclusive and were wrong:
 - An S-meter calibration that was measuring propagation, not the attenuator.
 
 Each was caught by a control, and none would have been caught without one.
+
+## Opening the port
+
+Use `k3serial.open_k3(PORT)`, never `serial.Serial(...)` directly. A port
+comes up with DTR and RTS asserted unless it is told otherwise, and the K3
+can be told to read DTR as KEY and RTS as PTT (its RS232 menu) — so opening
+it the default way is a key-down at a radio configured for that. It happened
+here, and stopping it took unplugging the USB lead.
+
+`k3probe2.py` is the exception: its sweep asserts both lines on purpose, to
+find out what they do. Turn on TX TEST before running it.

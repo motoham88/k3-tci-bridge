@@ -22,7 +22,7 @@ import threading
 import time
 
 import numpy as np
-import serial
+import k3serial
 
 PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AL047393-if00-port0"
 ALSA, RATE, TONE_HZ = "hw:2,0", 48000, 1500.0
@@ -124,7 +124,7 @@ def transmit(ser, path, seconds=1.3, samples=6):
 
 
 def main():
-    ser = serial.Serial(PORT, 38400, timeout=0.5)
+    ser = k3serial.open_k3(PORT)
     time.sleep(0.2)
     ask(ser, "K31", wait=0.3)
     stop = threading.Event()

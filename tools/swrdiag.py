@@ -11,7 +11,7 @@ Distinguishes three explanations:
 """
 import time
 
-import serial
+import k3serial
 
 PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AL047393-if00-port0"
 QRG = 14_075_000
@@ -55,7 +55,7 @@ def tune_and_read(ser, label, seconds=1.6):
     return swrs
 
 
-with serial.Serial(PORT, 38400, timeout=0.5) as ser:
+with k3serial.open_k3(PORT) as ser:
     time.sleep(0.2)
     ask(ser, "K31", wait=0.3)
     saved = {c: ask(ser, c) for c in ("FA", "MD", "PC", "TM", "AN")}

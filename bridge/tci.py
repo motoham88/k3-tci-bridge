@@ -135,8 +135,24 @@ class RadioState:
 class Bridge:
     """Owns the radio state and translates TCI <-> CAT."""
 
-    def __init__(self, cat):
+    def __init__(self, cat, ptt_line: bool = False):
         self.cat = cat
+        # Key with RTS rather than `TX;`. Off by default, because it takes a
+        # radio configured for it -- the K3's RS232 menu has to read RTS=PTT
+        # -- and asserting a line at a radio set to OFF keys nothing at all.
+        #
+        # WHY IT IS WORTH HAVING: it fails safe. A line is held up by the
+        # process, so the process dying drops it and the radio unkeys, where
+        # `TX;` needs something still alive to send `RX;`. The watchdog
+        # covers a client that vanishes; nothing in CAT covers the bridge
+        # itself vanishing.
+        #
+        # NOT USED FOR CW. The unkey at the end of a keyed message has to
+        # wait for the message to finish, and only a CAT command can do that
+        # -- `KYW` defers following commands until the text has been sent.
+        # A line drops the instant it is told to, which would cut the
+        # message off. So CW keeps its `TX;` … `RX;` bracket either way.
+        self.ptt_line = ptt_line
         self.state = RadioState()
         self.broadcast = None      # set by the server: callable(str)
         self._ptt_deadline: float | None = None
@@ -423,6 +439,35 @@ class Bridge:
             time.sleep(0.08)
         return False
 
+    def _key_on(self) -> bool:
+        """Key the transmitter, and confirm the radio agrees that it is.
+
+        In line mode the fallback matters more than the line does: a radio
+        whose RS232 menu is not set to PTT ignores RTS completely, and the
+        failure is silent -- the bridge would report transmitting, the
+        client would send audio, and nothing would go out. So an unconfirmed
+        line drops back to `TX;` rather than being trusted.
+        """
+        if self.ptt_line:
+            self.cat.set_ptt_line(True)
+            if self._await_tq(True):
+                return True
+            log.warning("RTS did not key the radio -- is its RS232 menu set "
+                        "to RTS=PTT? falling back to TX;")
+            self.cat.set_ptt_line(False)
+        self.cat.send("TX")
+        return self._await_tq(True)
+
+    def _key_off(self) -> None:
+        """Unkey by BOTH routes, every time, whatever keyed it.
+
+        Dropping an unused line costs nothing and `RX;` into a radio already
+        receiving costs nothing, while getting this wrong costs a transmitter
+        left running. There is no state worth consulting here.
+        """
+        self.cat.set_ptt_line(False)
+        self.cat.send("RX")
+
     def _cmd_trx(self, args):
         if len(args) >= 2:                      # SET
             # Strict bool: only literal true/false key the transmitter.
@@ -450,10 +495,9 @@ class Bridge:
                     or (src == "" and self.state.mode in ("digu", "digl")))
                 self._ptt_deadline = time.monotonic() + PTT_WATCHDOG_S
                 self._ptt_owner = self._current_client
-                self.cat.send("TX")
-                ok = self._await_tq(True)
+                ok = self._key_on()
                 if not ok:
-                    log.warning("TX; did not take")
+                    log.warning("the radio did not key")
                     self._ptt_deadline = None
                     self._ptt_owner = None
                     self.ptt_wants_audio = False
@@ -471,13 +515,13 @@ class Bridge:
                     log.warning("unkey from a client that does NOT hold PTT "
                                 "-- cutting short another client's "
                                 "transmission")
-                self.cat.send("RX")
+                self._key_off()
                 if not self._await_tq(False):
                     # Retry once, then leave the watchdog ARMED. Clearing the
                     # deadline on an unconfirmed unkey would disable the only
                     # thing that can rescue a stuck transmitter.
-                    log.warning("RX; unconfirmed -- retrying")
-                    self.cat.send("RX")
+                    log.warning("unkey unconfirmed -- retrying")
+                    self._key_off()
                     if not self._await_tq(False, timeout=2.0):
                         log.error("RADIO STILL KEYED after two RX; commands "
                                   "-- leaving watchdog armed")
@@ -908,6 +952,10 @@ class Bridge:
             # been sent. Nothing here waits for that -- this runs under the
             # lock that serialises every client's commands, PTT included, so
             # blocking for the length of a message would freeze the station.
+            #
+            # A bare CAT send, deliberately, not `_key_off()`: being held
+            # behind the message is the entire point here, and a line drops
+            # the instant it is told to.
             self.cat.send("RX")
             # WHICH LEAVES A DEADLINE AS THE BACKSTOP. If that `RX;` is lost
             # the radio sits in transmit with nothing to bring it back, so
@@ -948,8 +996,16 @@ class Bridge:
         return self._cmd_cw_msg(args)
 
     def _cmd_cw_macros_stop(self, args):
-        # RX terminates message play, including a repeating message.
-        self.cat.send("RX")
+        # RX terminates message play, including a repeating message, and the
+        # line goes down too in case PTT is what is holding the transmitter
+        # up. Both, because this is the stop button.
+        #
+        # UNVERIFIED AS AN IMMEDIATE STOP. The `W` form defers following
+        # commands until the message has been sent -- that deferral is what
+        # makes the bracket's trailing `RX;` land in the right place -- so
+        # this `RX;` may well queue behind the message it is meant to cut
+        # short. Worth testing with something long enough to interrupt.
+        self._key_off()
         return [], []
 
     def _cw_speed(self, args, name):
@@ -1246,7 +1302,7 @@ class Bridge:
         bad state, so it does not rely on the client sending PTT-off."""
         if self._ptt_deadline and time.monotonic() > self._ptt_deadline:
             log.warning("PTT watchdog expired -- forcing RX")
-            self.cat.send("RX")
+            self._key_off()
             self._ptt_deadline = None
             self._ptt_owner = None
             self.state.transmitting = False
@@ -1258,7 +1314,7 @@ class Bridge:
         with self._lock:
             if client is not None and client is self._ptt_owner:
                 log.warning("PTT owner disconnected while keyed -- unkeying")
-                self.cat.send("RX")
+                self._key_off()
                 self._await_tq(False)
                 self._ptt_deadline = None
                 self._ptt_owner = None
@@ -1270,7 +1326,7 @@ class Bridge:
     def force_rx(self) -> None:
         if self._ptt_deadline is not None or self.state.transmitting:
             log.warning("forcing RX")
-            self.cat.send("RX")
+            self._key_off()
             self._ptt_deadline = None
             self.state.transmitting = False
 

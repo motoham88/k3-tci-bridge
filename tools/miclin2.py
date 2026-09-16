@@ -19,7 +19,7 @@ import sys
 import time
 
 import numpy as np
-import serial
+import k3serial
 
 PORT = "/dev/k3cat"
 ALSA, RATE, FRAMES = "hw:2,0", 48000, 2048
@@ -110,7 +110,7 @@ def miclin(ser, want_on):
 def main():
     subprocess.run(["amixer", "-c", "2", "sset", "PCM", "100%"],
                    capture_output=True)
-    with serial.Serial(PORT, 38400, timeout=0.5) as ser:
+    with k3serial.open_k3(PORT) as ser:
         time.sleep(0.2)
         ask(ser, "K31", wait=0.3)
         ic = raw(ser, "IC")

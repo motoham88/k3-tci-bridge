@@ -517,7 +517,13 @@ async def amain(args) -> None:
     else:
         log.warning("could not determine TX TEST state")
 
-    bridge = tci.Bridge(cat)
+    bridge = tci.Bridge(cat, ptt_line=args.ptt_rts)
+    if args.ptt_rts:
+        log.warning("PTT will be keyed by RTS. The radio's RS232 menu must "
+                    "read RTS=PTT for that to key anything -- and with it "
+                    "set, ANY program opening this port keys the radio, "
+                    "because a port comes up with its lines asserted "
+                    "unless it is told not to.")
     bridge.prime()
     server = Server(bridge, args.host, args.port, args.alsa, args.no_audio)
     cat.on_event = lambda msg: server.broadcast_threadsafe(
@@ -548,6 +554,12 @@ def main() -> None:
     p.add_argument("--alsa", default=DEFAULT_ALSA)
     p.add_argument("--no-audio", action="store_true",
                    help="control only; leave the ALSA devices alone")
+    p.add_argument("--ptt-rts", action="store_true",
+                   help="key PTT with the RTS line instead of TX;. Needs the "
+                        "K3's RS232 menu set to RTS=PTT. Fails safe: the "
+                        "line drops if this process dies, where TX; needs "
+                        "something alive to send RX;. CW keeps its TX;/RX; "
+                        "bracket regardless -- see Bridge.ptt_line.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     logging.basicConfig(

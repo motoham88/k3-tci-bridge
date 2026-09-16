@@ -11,7 +11,7 @@ import subprocess
 import time
 
 import numpy as np
-import serial
+import k3serial
 
 PORT = "/dev/k3cat"
 ALSA = "hw:2,0"
@@ -50,7 +50,7 @@ def level(seconds=1.5):
     return rms, peak
 
 
-with serial.Serial(PORT, 38400, timeout=0.5) as ser:
+with k3serial.open_k3(PORT) as ser:
     time.sleep(0.2)
     ask(ser, "K31", wait=0.3)
     ag0 = ask(ser, "AG")

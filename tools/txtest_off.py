@@ -7,7 +7,7 @@ that is a separate, deliberate step once the band and load are confirmed.
 """
 import time
 
-import serial
+import k3serial
 
 PORT = "/dev/k3cat"
 
@@ -37,7 +37,7 @@ def tx_test(ser):
     return bool(a & 0x20), a
 
 
-with serial.Serial(PORT, 38400, timeout=0.5) as ser:
+with k3serial.open_k3(PORT) as ser:
     time.sleep(0.2)
     ask(ser, "K31", wait=0.3)
     ask(ser, "RX", wait=0.2)          # make sure we are not keyed

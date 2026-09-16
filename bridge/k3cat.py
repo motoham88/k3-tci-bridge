@@ -59,6 +59,31 @@ def _tb_len(buf: bytes) -> int | None:
     return 5 + rr + 1
 
 
+def open_serial(port: str, baud: int = 38400,
+                timeout: float = 0.1) -> serial.Serial:
+    """Open the CAT port with DTR and RTS LOW.
+
+    Every program that opens this port must do it this way. pyserial
+    asserts both lines by default, and the K3 can be told to read DTR as
+    KEY and RTS as PTT -- so a port opened the default way is a key-down at
+    a radio configured for it. That is not hypothetical: it happened here,
+    and stopping it took unplugging the USB lead.
+
+    The states are set before open() rather than after, because pyserial
+    applies them inside open() as soon as it has the descriptor.
+    """
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baud
+    ser.timeout = timeout
+    ser.rtscts = False
+    ser.dsrdtr = False
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    return ser
+
+
 class K3Cat:
     def __init__(self, port: str, baud: int = 38400, on_event=None):
         self.port, self.baud = port, baud
@@ -95,13 +120,7 @@ class K3Cat:
         # The old bench note read "modem control lines are irrelevant, the
         # bridge needn't manage them". They were irrelevant in that session
         # because the radio had them switched off.
-        self._ser = serial.Serial()
-        self._ser.port = self.port
-        self._ser.baudrate = self.baud
-        self._ser.timeout = 0.1
-        self._ser.dtr = False           # applied by open(), not after it
-        self._ser.rts = False
-        self._ser.open()
+        self._ser = open_serial(self.port, self.baud, timeout=0.1)
         time.sleep(0.2)
         self._ser.reset_input_buffer()
 
@@ -137,6 +156,21 @@ class K3Cat:
             except Exception:
                 pass
             self._ser.close()
+
+    def set_ptt_line(self, on: bool) -> None:
+        """Drive RTS, which the K3 reads as PTT when its RS232 menu says so.
+
+        Harmless when it does not: the line moves and the radio ignores it.
+        That is what makes it safe to drop this line on every unkey, keying
+        path regardless -- the cheapest way to be sure a transmission cannot
+        outlive the thing that started it.
+        """
+        if self._ser is None:
+            return
+        try:
+            self._ser.rts = on
+        except OSError as exc:              # a port that went away
+            log.error("could not set RTS %s: %s", "on" if on else "off", exc)
 
     # ---------- reader ----------
 

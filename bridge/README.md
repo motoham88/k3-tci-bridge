@@ -181,6 +181,32 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - TX audio ingest (float32 and int16), continuous primed playback stream
 - `volume` / `mute` in software, `rx_smeter` at 5 Hz (suppressed in TX)
 - CW text keyed with `TX;` … `KYW<text>;` … `RX;` rather than on VOX
+- PTT optionally keyed by RTS (`--ptt-rts`), which fails safe
+
+**PTT from RTS is opt-in, and fails safe.** `--ptt-rts` keys with the line
+instead of `TX;`. The reason to want it is what happens when this process
+dies: the line drops and the radio unkeys, where `TX;` needs something still
+alive to send `RX;`. The watchdog covers a *client* that vanishes; nothing
+in CAT covers the bridge itself vanishing.
+
+It needs the K3's RS232 menu set to RTS=PTT. A radio set to OFF ignores the
+line and says nothing about it, so an unconfirmed line falls back to `TX;`
+rather than being trusted — otherwise the bridge would report transmitting,
+the client would send audio, and nothing would go out. Unkeying always does
+both: drop the line, send `RX;`. Dropping an unused line costs nothing and
+`RX;` into a receiving radio costs nothing, while getting it wrong costs a
+transmitter left running.
+
+**CW keeps its `TX;`/`RX;` bracket regardless.** The unkey at the end of a
+keyed message has to wait for the message to finish, and only a CAT command
+can do that — `KYW` defers following commands until the text has been sent.
+A line drops the instant it is told to, which would cut the message off.
+
+**With the radio set for line keying, ANY program opening the port keys it.**
+A port comes up with DTR and RTS asserted unless told otherwise. Everything
+in `tools/` goes through `k3serial.open_k3` for that reason, and the bridge
+through `k3cat.open_serial`; the one exception is `k3probe2.py`, which
+asserts the lines deliberately and now says so.
 
 **An S-meter count is range-checked before it is treated as a signal.** Both
 conversions are unbounded above — `SMH999` converts to +853 dBm — and the UI

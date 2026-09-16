@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 import psutil
-import serial
+import k3cat
 
 ALSA = "hw:2,0"
 RATE = 48000
@@ -33,7 +33,7 @@ cat_lat = []
 def cat_poller():
     """S-meter poll at 200 ms, exactly as the bridge will do it."""
     try:
-        with serial.Serial(PORT, 38400, timeout=0.5) as ser:
+        with k3cat.open_serial(PORT, timeout=0.5) as ser:
             time.sleep(0.2)
             while not stop.is_set():
                 t0 = time.perf_counter()

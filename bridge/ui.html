@@ -440,13 +440,20 @@ function sendVfo(){
 //
 // A continuing drag pushes the deadline out ahead of itself, so one timer
 // serves a single button press and a thirty-second turn of the wheel alike.
+// It cannot expire under a live drag, which is not the same thing: at 1 Hz
+// a tick is 12 px of deliberate movement, so a slow turn can go longer than
+// the deadline between steps, and letting it lapse there would resync from
+// under the finger AND spend a GET on the lock that every client's commands
+// -- PTT included -- go through. The drag holds until it ends.
 const FREQ_SETTLE_MS = VFO_MIN_MS + 280;
 let freqHold = 0, resyncTimer = null;
 function holdFreq(){
   freqHold = performance.now() + FREQ_SETTLE_MS;
   clearTimeout(resyncTimer);
-  resyncTimer = setTimeout(() => { freqHold = 0; send("vfo:0,0"); },
-                           FREQ_SETTLE_MS);
+  resyncTimer = setTimeout(() => {
+    if (engaged) return holdFreq();
+    freqHold = 0; send("vfo:0,0");
+  }, FREQ_SETTLE_MS);
 }
 function step(hz){
   S.vfoA = Math.max(0, S.vfoA + hz);

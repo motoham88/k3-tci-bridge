@@ -62,7 +62,11 @@ frequency, so the dropped ones lose nothing. Read-backs are ignored for
 drag the display backwards — and one `vfo` GET at the end of that resyncs,
 which is also what corrects the display when the radio clamps at a band
 edge. A continuing drag pushes that deadline out ahead of itself, so one
-timer covers a single button press and a long turn of the wheel alike.
+timer covers a single button press and a long turn of the wheel alike — and
+it cannot expire under a live drag, which is not the same thing: at 1 Hz a
+tick is 12 px of deliberate movement, so a slow turn can go longer than the
+deadline between steps, and letting it lapse there would resync from under
+the finger and spend a GET on the lock PTT goes through.
 
 The hold covers the digit steppers and the step buttons too, not only the
 wheel. The 3 s reconcile sweep and the unsolicited `IF` both broadcast

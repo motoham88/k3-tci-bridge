@@ -129,8 +129,18 @@ class Server:
                 self.audio_clients.discard(ws)
 
     def _ensure_audio(self) -> None:
-        if self.no_audio or self.capture:
+        if self.no_audio:
             return
+        if self.capture:
+            if self.capture.running:
+                return
+            # The object outliving its reader is how a dead arecord used to
+            # become permanent silence: this returned early on a capture
+            # that had stopped, so nothing a client did could bring audio
+            # back. Clear it out and start a fresh one.
+            log.warning("capture had stopped -- restarting it")
+            self.capture.stop()
+            self.capture = None
         self.capture = audio.AudioCapture(self.alsa, self._on_capture_frame)
         self.playback = audio.AudioPlayback(self.alsa)
         self.capture.start()

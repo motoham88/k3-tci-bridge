@@ -122,6 +122,10 @@ class AudioCapture:
         self._stop = threading.Event()
         self.frames_sent = 0
         self.underruns = 0
+        # False once the reader has stopped on its own -- arecord died and
+        # this object will never produce another frame. The server tests it
+        # before deciding a capture is still running; see _ensure_audio.
+        self.running = False
 
     def start(self) -> None:
         self._proc = subprocess.Popen(
@@ -132,6 +136,7 @@ class AudioCapture:
              "--buffer-size", str(self.frames * 4)],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._stop.clear()
+        self.running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         log.info("capture started on %s (%d Hz, %d-frame periods)",
@@ -139,6 +144,12 @@ class AudioCapture:
 
     def _loop(self) -> None:
         want = self.frames * 2 * 2       # stereo int16
+        try:
+            self._read_loop(want)
+        finally:
+            self.running = False
+
+    def _read_loop(self, want: int) -> None:
         while not self._stop.is_set():
             chunk = self._proc.stdout.read(want)
             if not chunk or len(chunk) < want:
@@ -148,8 +159,18 @@ class AudioCapture:
                 if self._stop.is_set():
                     break
                 self.underruns += 1
-                log.warning("short read from arecord (%d bytes)", len(chunk))
-                continue
+                # A short read means arecord is GONE -- read() on a pipe
+                # blocks until it has the bytes or the far end closes, so
+                # there is no other way to get here. `continue` then spun on
+                # a dead pipe forever, one warning per iteration, with the
+                # audio silent and nothing that could bring it back. Say so
+                # once, with arecord's exit code, and stop: the client's own
+                # re-subscribe restarts capture cleanly.
+                log.error("arecord ended (%d bytes, exit %s) -- capture "
+                          "stopped; it will be restarted when a client "
+                          "subscribes",
+                          len(chunk), self._proc.poll())
+                break
             pcm = np.frombuffer(chunk, dtype=np.int16).reshape(-1, 2)
             try:
                 self.on_frame(pcm[:, 0])          # LEFT only: see module doc

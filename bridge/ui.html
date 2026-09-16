@@ -266,7 +266,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
-            decoded:false, meterSeen:0 };
+            decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
 let ws, ctx, gain, nextT = 0, frames = 0, lastFrame = 0;
 
@@ -289,6 +289,7 @@ function connect(){
                        S.ready=false; log("closed — retrying in 2 s"); setTimeout(connect, 2000); };
   ws.onerror = () => log("socket error");
   ws.onmessage = e => {
+    S.msgSeen = performance.now();
     if (typeof e.data === "string") e.data.split(";").forEach(t => t.trim() && onText(t.trim()));
     else onAudio(e.data);
   };
@@ -302,7 +303,20 @@ function onText(msg){
 
   switch(name){
     case "device":  $("#dev").textContent = args[0] || "TCI"; break;
-    case "ready":   S.ready = true; $("#dot").className = "on"; log("ready"); break;
+    case "ready":
+      S.ready = true; $("#dot").className = "on"; log("ready");
+      // A SUBSCRIPTION DOES NOT SURVIVE THE SOCKET. audio_start registers
+      // this connection with the bridge, so a reconnect -- a Wi-Fi hiccup,
+      // a bridge restart, a keepalive timeout -- leaves the page believing
+      // audio is on, the button still reading "Audio", the context still
+      // running, and nothing ever arriving again. The dot goes green and
+      // the radio goes quiet, which is exactly what it looked like from
+      // the operating position. So the subscription is re-asserted here,
+      // where the bridge has just said it is ready to take commands.
+      if (S.audio){ nextT = 0; resumeCtx();
+                    send("audio_start:0"); send(`volume:${$("#vol").value}`);
+                    log("audio re-subscribed"); }
+      break;
     case "start":   break;
     case "vfo":
       // While we are stepping, read-backs arrive behind the operator --
@@ -679,6 +693,17 @@ function onAudio(buf){
 // 48 kHz asked for up front so the context matches the TCI wire rate and
 // nothing has to resample. A browser is free to refuse the hint and throw;
 // take whatever rate it will give us rather than losing audio altogether.
+// Browsers suspend an AudioContext that has been backgrounded, and iOS
+// suspends one on any interruption -- a call, another app, the screen
+// locking. Nothing resumes it by itself: frames keep arriving and get
+// scheduled into a clock that is not running, so the page looks healthy and
+// plays nothing. Resuming is free when it is already running.
+function resumeCtx(){
+  if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && S.audio) resumeCtx();
+});
 function makeCtx(){
   const AC = window.AudioContext || window.webkitAudioContext;
   try { return new AC({sampleRate:48000}); }
@@ -728,10 +753,44 @@ setInterval(() => {
   // gone quiet without closing. Any of those, the bar is a leftover.
   if (!S.tx && S.meterSeen && performance.now() - S.meterSeen > 1200)
     clearMeter("—");
+  // A socket that dies without closing -- Wi-Fi dropping, the Pi going
+  // away -- delivers no close event, so the reconnect that handles an
+  // ordinary drop never runs and the page sits on a dead connection
+  // looking connected. Messages arrive constantly when anything is alive
+  // (the S-meter alone is 5 Hz), so silence on the whole socket is the
+  // signal. Closing it by hand is what puts the existing retry to work.
+  // NOT WHILE TRANSMITTING, and this is the whole reason the guard is
+  // spelled out rather than assumed: the S-meter poll is suppressed in TX
+  // and the TX sensors only run when a client is feeding audio, so a plain
+  // PTT hold or a long CW message is a legitimately silent socket. Closing
+  // it there would be the worst possible moment -- the bridge unkeys a
+  // client that disconnects, so the watchdog would cut the transmission it
+  // was watching.
+  const quiet = performance.now() - S.msgSeen;
+  if (S.ready && !S.tx && S.msgSeen && quiet > 6000){
+    log("no traffic for 6 s — reconnecting");
+    // onclose does the retry; close() on a socket whose TCP is already
+    // dead still fires it locally, which is the point of closing by hand.
+    S.ready = false;
+    if (ws) ws.close(); else connect();
+  }
   if (!S.audio) return;
   const stale = performance.now() - lastFrame;
   $("#astat").textContent = stale < 500 ? `${frames} frames` : "stalled";
   if (ctx) $("#lat").textContent = `buffer ${Math.max(0,(nextT - ctx.currentTime)*1000|0)} ms`;
+  // Subscribed, connected, and no audio for three seconds: ask again. The
+  // bridge keeps subscribers in a set, so a duplicate costs nothing, and
+  // this is the one failure the page can fix by itself.
+  // The rate limit keeps its own clock. Pushing `lastFrame` forward would
+  // have done it too, and would have cost the only indicator that says
+  // audio is dead: `#astat` reads that same value, so asking again would
+  // have quietly repainted "stalled" as though frames were arriving.
+  if (S.ready && stale > 3000 && performance.now() - S.askedAudio > 3000){
+    S.askedAudio = performance.now();
+    resumeCtx(); nextT = 0;
+    send("audio_start:0");
+    log("audio stalled — re-subscribing");
+  }
 }, 500);
 
 // ── PTT ───────────────────────────────────────────────────────────────────

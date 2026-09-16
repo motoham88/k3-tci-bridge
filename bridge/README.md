@@ -294,6 +294,38 @@ logs a warning when an unkey arrives from a client that does not hold PTT —
 it is still permitted, since an emergency stop from anywhere is worth
 having, but it should never happen silently.
 
+## Audio stops for reasons the page can fix itself
+
+**An audio subscription does not survive the socket.** `audio_start`
+registers *that connection* with the bridge, so any reconnect — a Wi-Fi
+hiccup, a bridge restart, a keepalive timeout — leaves the page believing
+audio is on: the button still reads "Audio", the context is still running,
+and nothing ever arrives again. The dot goes green and the radio stays
+quiet, which is exactly what it looks like from the operating position, and
+nothing in the journal says anything is wrong. The page re-asserts the
+subscription on `ready`, and asks again if frames stop for three seconds.
+
+**A suspended AudioContext never resumes itself.** Browsers suspend one
+that has been backgrounded, and iOS suspends it on any interruption — a
+call, another app, the screen locking. Frames keep arriving and get
+scheduled against a clock that is not running, so the page looks healthy
+and plays silence. Resumed on `visibilitychange`.
+
+**A socket can die without closing.** No close event, so the reconnect that
+handles an ordinary drop never runs. Traffic is the liveness test — the
+S-meter alone is 5 Hz — but *not during transmit*: the S-meter poll is
+suppressed there and the TX sensors only run when a client is feeding
+audio, so a plain PTT hold is a legitimately silent socket. Closing it
+there would be the worst possible moment, since the bridge unkeys a client
+that disconnects.
+
+**A dead `arecord` used to be permanent silence.** `read()` on a pipe
+returns short only at EOF, so a short read means the recorder is gone — and
+the loop treated it as a glitch and continued, spinning on a dead pipe and
+logging a warning per iteration. It now stops and says so with the exit
+code, and `_ensure_audio` restarts a capture whose reader has stopped
+rather than returning early because the object still exists.
+
 ## Two test-harness traps
 
 **Never wait for the socket to go quiet.** `rx_smeter` broadcasts every

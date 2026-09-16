@@ -79,6 +79,29 @@ states open-circuit volts. This cannot be recovered afterwards from the data
 alone: a run that is uniformly 6 dB out is indistinguishable from a radio
 whose S9 sits 6 counts away.
 
+**This station's CE-4000 is being treated as PD, and that is a judgement, not
+a verified spec.** It reads microvolts only, with no impedance marked on SIG
+GEN OUT and no dBm scale to cross-check against — so the usual test (does
+1 uV correspond to -107 dBm or to -113 dBm?) cannot be run on the panel. The
+reasoning is that it is a land-mobile monitor, and land-mobile gear is 50 ohm
+throughout with generator levels conventionally stated across a matched load.
+That is a prior, not a measurement.
+
+So `--emf` is left off, and every run records `"emf": false` beside the raw
+microvolts. If the manual later says EMF, the whole run shifts by 6.02 dB and
+`--fit` redoes the analysis without the radio. Until the manual is found, the
+*slope* from these runs is solid and the *anchor* is provisional — say so in
+anything that quotes a dBm figure derived from it.
+
+One weak corroboration, worth knowing but not worth trusting: if PD is right,
+the fitted S9 should land somewhere near the documented SMH 40, because the
+K3's meter is factory-set to be roughly honest. If it instead lands about six
+counts away *and* the slope is near 1 dB/count — that is, almost exactly
+6.02 dB off — that is a hint the convention is wrong, not that the radio is.
+It is only a hint: a genuine six-count meter error looks identical, which is
+the whole reason this is being calibrated. Treat it as a prompt to go find
+the manual, never as a result.
+
 ## The pattern worth copying
 
 Every one of these runs its controls first and aborts if the controls fail.

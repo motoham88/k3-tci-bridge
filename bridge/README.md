@@ -181,6 +181,29 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - TX audio ingest (float32 and int16), continuous primed playback stream
 - `volume` / `mute` in software, `rx_smeter` at 5 Hz (suppressed in TX)
 - CW text keyed with `TX;` … `KYW<text>;` … `RX;` rather than on VOX
+- CW sending runs on its own thread, so a stop can interrupt it
+
+**What the CW stop button can and cannot do.** It cannot take back text
+already inside the radio. `RX;` queues behind the `KY` buffer like every
+other command the `W` form defers — measured on the air, a stop three
+seconds into a nine-second message changed the finishing time by under a
+second, indistinguishable from not stopping at all. That deferral is not a
+bug to route around: it is the same mechanism that makes an ordinary message
+unkey at exactly the right moment.
+
+What it does instead is abandon every chunk not yet written. On a long macro
+that is most of it, and 24 characters is the most the radio can be holding
+that we cannot take back.
+
+**That only works because sending runs off the connection handler.** It used
+to write every chunk inside the command handler, pacing each against the
+radio's buffer — and a chunk is fourteen seconds of sending at 20 WPM. A
+client's next message is only read once the previous one returns, so a
+client could not interrupt its own transmission: a stop sent five seconds
+into a message was not read for another nine. The worker takes no bridge
+lock either; the long wait in it is for the radio to finish sending, and
+holding the lock that serialises every client's commands across that is what
+made the button useless.
 - PTT optionally keyed by RTS (`--ptt-rts`), which fails safe
 
 **PTT from RTS is opt-in, and fails safe.** `--ptt-rts` keys with the line

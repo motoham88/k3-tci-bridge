@@ -507,7 +507,7 @@ The as-found 010 was ~6 dB quieter for no benefit.
 | `cw_macros_speed:<wpm>,0` | `KS<3 digits>;` | `KS;` | Same register as above |
 | `cw_msg:<text>` | `KYW<text>;` | `KY;` | **24 characters max per command** — chunk longer text |
 | `cw_macros:<text>` | `KYW<text>;` | `KY;` | Same |
-| `cw_macros_stop` | `RX;` | `TQ;` | `RX` terminates message play |
+| `cw_macros_stop` | `RX;` | `TQ;` | Ends the transmission; does NOT interrupt it — see below |
 | `keyer:0,<bool>` | `TX;` / `RX;` | `TQ;` | Straight key-down has no CAT equivalent; approximate with PTT |
 
 **`VX1` (CW VOX) is a precondition for `KY` keying, and its absence fails
@@ -539,7 +539,17 @@ processing of following commands until the message has been sent, which
 matters because we may send `KS` (speed) right behind it.
 
 `KY;` GET returns buffer state: 0 = not full, 1 = full. Poll it before
-sending the next chunk.
+sending the next chunk. Note that the radio DOES answer `KY;` while it is
+playing a message, even though it defers other commands — which is what
+makes flow control possible at all.
+
+**`RX;` does not interrupt a message in progress.** Measured: a 22-character
+message stopped three seconds in finished at 8.6 s; the same message with no
+stop at all finished at 9.7 s. The `W` form defers `RX;` behind the `KY`
+buffer exactly as it defers everything else, so the stop ends the
+transmission rather than interrupting it. The bridge therefore implements
+stop as "abandon the chunks not yet written", which bounds what cannot be
+taken back at one chunk — 24 characters.
 
 Prosign mapping the K3 accepts inside `KY` text: `(`=KN, `+`=AR, `=`=BT,
 `%`=AS, `*`=SK, `!`=VE. Pass client text through unmodified; these are the

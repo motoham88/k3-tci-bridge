@@ -295,6 +295,42 @@ def main():
               True, fails)
         check(f"nothing lost for {text[:18]!r}", "".join(chunks), text, fails)
 
+    print("\n=== the stop button abandons what has not been written ===")
+    # A stop cannot take back text already inside the radio -- RX; queues
+    # behind the KY buffer like everything else the W form defers, measured
+    # on the air as under a second of difference on a nine-second message.
+    # What it CAN do is abandon the chunks still waiting here, which on a
+    # long macro is most of it. That only works because the sending runs off
+    # the connection handler: it used to hold it for the length of the
+    # message, so a client could not interrupt its own transmission.
+    class SlowCat(StubCat):
+        """Answers the buffer poll, slowly enough to interrupt."""
+
+        def ask(self, cmd, timeout=0.6, quiet=False):
+            if cmd.rstrip(";") == "KY":
+                time.sleep(0.05)
+                return "KY0;"
+            return self.asks.get(cmd.rstrip(";"))
+
+    b = tci.Bridge(SlowCat(None, {"TQ": "TQ1;", "VX": "VX1;"}))
+    b.state.mode = "cwl"
+    long_text = " ".join(["kx3h"] * 40)          # many chunks
+    b._cw_send(long_text)
+    time.sleep(0.2)
+    b.cw_stop()
+    if b._cw_thread:
+        b._cw_thread.join(timeout=5)
+    written = [c for c in b.cat.sent if c.startswith("KYW")]
+    total = len(b._cw_chunks(long_text))
+    check("stopped before writing everything",
+          len(written) < total, True, fails)
+    check("wrote at least something", len(written) >= 1, True, fails)
+    check("queue emptied", b._cw_queue, [], fails)
+    check("unkeyed by both routes",
+          b.cat.sent[-2:], ["<rts down>", "RX"], fails)
+    # And the thread is not left behind to key the radio again afterwards.
+    check("worker finished", b._cw_thread.is_alive(), False, fails)
+
     print("\n=== keying by line, and coming back from it ===")
     # The line is worth having because it fails safe -- it drops when this
     # process dies, where TX; needs something alive to send RX;. But a radio

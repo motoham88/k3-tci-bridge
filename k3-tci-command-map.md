@@ -914,6 +914,35 @@ Sideband polarity for CW and DATA is **settled** — see above. Remaining:
    particularly in CW, where we deliberately don't touch `IS`. (The CW
    *read* path is now confirmed; it's the write path that's untested.)
 
+**RF GAIN (`RG`) is inverted, and reducing it PINS the S-meter.**
+`RG000`-`RG250`, clamping at 250, and **`RG250` is MAXIMUM gain** — the
+opposite of the intuitive guess. Worse, the K3's S-meter reads the AGC line
+and manual RF-gain reduction pulls that line up, so backing the gain off
+drives the meter *upward* on a dead band. Measured with no signal present
+(service monitor in receive, P3 confirming a -140 dBm floor):
+
+| `RG` | `SM` | `SMH` |
+|---|---|---|
+| 250 | 2 | 11 | true noise floor — max gain |
+| 214 | 8 | **40** | |
+| 000 | 19 | 91 | meter pinned by gain reduction |
+
+**`RG214` on a dead band reads `SMH 40`, which is exactly the documented S9
+count.** A calibration run left at the station's resting RF-gain setting
+would have produced a stable, convincing, entirely fictitious S9 at the
+noise floor. Any measurement that reads the S-meter must assert `RG250`
+first. `RG` was previously undocumented here, appearing only as a label in
+`tools/k3state.py`.
+
+**A stale CAT reply can surface as the first read after opening the port.**
+Every batch of S-meter reads in the calibration session contained exactly
+one outlier, and it was always the *previous* measurement's value — a 91
+turning up in the batch after `RG000`, a 37 in the batch after the 50 uV
+point. A median over a dozen reads absorbs it and the range-check in
+`bridge/tci.py` would reject an out-of-range one, but a tool taking a
+single sample will occasionally return the last measurement instead of the
+current one.
+
 7. **The S-meter → dBm conversion is uncalibrated, and needs a signal
    generator.** Both formulas are anchored on the reference's documented
    points, and neither has been verified.

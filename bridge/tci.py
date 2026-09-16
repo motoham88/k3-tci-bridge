@@ -243,7 +243,10 @@ class Bridge:
         long enough to contain the fields being read? Every field sits at
         index 32 or below, which both the 37- and 38-character forms satisfy.
         """
-        r = self.cat.ask("IF", timeout=0.8)
+        # Deferred rather than lost while the radio is keying a message --
+        # see K3Cat.ask's `quiet`. The caller already treats no reply as
+        # "state left stale", which is the right answer during transmit.
+        r = self.cat.ask("IF", timeout=0.8, quiet=self.state.transmitting)
         if not r or not r.startswith("IF") or len(r) <= self.IF_LAST_FIELD:
             # SAY SO. This returned silently, which made every caller's
             # read-back indistinguishable from a confirmed one: the cached
@@ -759,8 +762,6 @@ class Bridge:
     # which matters because a speed change queued behind a message must not
     # overtake it.
     CW_MAX = 24
-    # How long to wait for the buffer to report room before writing anyway.
-    CW_WAIT_S = 3.0
 
     def _cw_chunks(self, text: str) -> list[str]:
         """Split text into KY payloads, each at most CW_MAX characters.
@@ -875,11 +876,25 @@ class Bridge:
             # for as long as the radio takes to key it. So an unknown answer
             # waits, and then writes anyway and says so, rather than
             # discarding the rest of what the operator asked to send.
-            waited, ky = 0.0, self.cat.ask("KY")
-            while ky != "KY0;" and waited < self.CW_WAIT_S:
-                time.sleep(0.15)
-                waited += 0.15
-                ky = self.cat.ask("KY")
+            # WAIT AS LONG AS THE TEXT ALREADY QUEUED CAN TAKE TO SEND. A
+            # flat three seconds was far too short for the thing being
+            # waited on: one full chunk at 20 WPM is about fourteen seconds
+            # of sending, so the bound has to come from the same arithmetic
+            # the watchdog uses, or the wait ends while the radio is still
+            # keying and the next chunk goes into a buffer that has no room
+            # for it.
+            #
+            # Measured against the clock, not by adding up sleeps. The old
+            # count ignored the 0.6 s each deferred poll spends timing out,
+            # so a nine-second wait was logged as 1.35 s -- which is how a
+            # bound of "three seconds" was quietly behaving like twenty.
+            start = time.monotonic()
+            deadline = start + cw_seconds(chunk, wpm)
+            ky = self.cat.ask("KY", timeout=0.3, quiet=True)
+            while ky != "KY0;" and time.monotonic() < deadline:
+                time.sleep(0.1)
+                ky = self.cat.ask("KY", timeout=0.3, quiet=True)
+            waited = time.monotonic() - start
             if ky != "KY0;":
                 log.warning("CW buffer not confirmed clear after %.1fs "
                             "(last answer %r) -- writing chunk %d anyway",

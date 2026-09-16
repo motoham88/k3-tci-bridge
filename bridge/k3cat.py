@@ -233,11 +233,19 @@ class K3Cat:
             self._ser.write(body.encode() + b";")
             self._ser.flush()
 
-    def ask(self, cmd: str, timeout: float = 0.6) -> str | None:
+    def ask(self, cmd: str, timeout: float = 0.6,
+            quiet: bool = False) -> str | None:
         """GET. Returns the response, '?;', or None on timeout.
 
         Band changes defer all command handling for up to 500 ms, so callers
         crossing a band edge should pass a longer timeout.
+
+        `quiet` is for the callers where NO ANSWER IS THE ANSWER. While the
+        radio is playing a `KYW` message it defers every following command
+        until the message has been sent, so a poll that times out there is
+        reporting "still sending" rather than a fault -- and logging each one
+        as a warning buried a real problem under fifteen false ones per
+        message. Those callers handle the None themselves.
         """
         body = cmd.rstrip(";")
         prefix = cmd_prefix(body)
@@ -252,7 +260,8 @@ class K3Cat:
             except queue.Empty:
                 with self._pending_lock:
                     self._pending = None
-                log.warning("timeout waiting for %s", body)
+                (log.debug if quiet else log.warning)(
+                    "timeout waiting for %s", body)
                 return None
 
     def ask_text(self, timeout: float = 0.6) -> str | None:

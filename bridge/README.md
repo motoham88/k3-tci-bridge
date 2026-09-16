@@ -180,6 +180,7 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - RX audio streaming: `audio_start` / `audio_stop`, float32 stereo at 48 kHz
 - TX audio ingest (float32 and int16), continuous primed playback stream
 - `volume` / `mute` in software, `rx_smeter` at 5 Hz (suppressed in TX)
+- CW text keyed with `TX;` … `KYW<text>;` … `RX;` rather than on VOX
 
 **An S-meter count is range-checked before it is treated as a signal.** Both
 conversions are unbounded above — `SMH999` converts to +853 dBm — and the UI

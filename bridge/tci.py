@@ -798,16 +798,30 @@ class Bridge:
             log.warning("cw_msg ignored: mode is %s, not CW", self.state.mode)
             return False
 
-        # VOX must be on for KY text to actually key the transmitter. In CW
-        # "VOX" means hit-the-key transmit -- without it the K3 accepts the
-        # text into its buffer and simply never transmits, with no error
-        # anywhere. VX is per-mode, so enabling it here does not touch the
-        # voice-mode VOX setting. Enable it rather than just warning: the
-        # point of a remote station is that nobody is there to press it.
+        # KEY THE TRANSMITTER, RATHER THAN LEAVING IT TO VOX. `TX;` puts it
+        # up before any text goes out and `RX;` behind the last chunk brings
+        # it down, which is what makes the T/R transition deterministic
+        # instead of a side effect of the first character arriving. The `W`
+        # form is what makes the trailing `RX;` correct: it defers following
+        # commands until the message has been sent, so the unkey lands after
+        # the last element rather than cutting it off.
+        #
+        # VOX stays as the fallback, not the plan. Without either, the K3
+        # takes KY text into its buffer and never transmits -- no `?;`, no
+        # error, nothing on the air -- so if `TX;` does not take, the old
+        # path runs rather than sending text into silence.
         vx = self.cat.ask("VX")
-        if vx == "VX0;":
-            log.info("enabling CW VOX (VX1) -- required for KY keying")
-            self.cat.set_verified("VX1", "VX", "VX1;")
+        keyed = False
+        self.cat.send("TX")
+        if self._await_tq(True):
+            keyed = True
+            self.state.transmitting = True
+            self._ptt_owner = self._current_client
+        else:
+            log.warning("TX; did not take for CW -- falling back to VOX")
+            if vx == "VX0;":
+                log.info("enabling CW VOX (VX1) -- required for KY keying")
+                self.cat.set_verified("VX1", "VX", "VX1;")
         text = text.replace("\n", " ")
         chunks = self._cw_chunks(text)
 
@@ -848,15 +862,55 @@ class Bridge:
             log.info("cw: write %d/%d after %.2fs wait: %r",
                      i + 1, len(chunks), waited, out)
             self.cat.send(out)
+        if keyed:
+            # Queued, not timed: the radio holds it until the message has
+            # been sent. Nothing here waits for that -- this runs under the
+            # lock that serialises every client's commands, PTT included, so
+            # blocking for the length of a message would freeze the station.
+            self.cat.send("RX")
+            # WHICH LEAVES A DEADLINE AS THE BACKSTOP. If that `RX;` is lost
+            # the radio sits in transmit with nothing to bring it back, so
+            # the PTT watchdog is armed with an estimate of how long the
+            # message can take. Generous on purpose: firing early truncates
+            # the transmission it is meant to protect. The state is cleared
+            # the ordinary way, by the reconcile sweep reading IF once the
+            # radio is answering commands again.
+            self._ptt_deadline = time.monotonic() + self._cw_seconds(text)
         return True
+
+    def _cw_seconds(self, text: str) -> float:
+        """A generous upper bound on how long `text` takes to send.
+
+        PARIS timing: 50 dot units per five-character word, so ten units per
+        character, and a dot is 1.2/wpm seconds -- 12 * chars / wpm. Doubled
+        with ten seconds on top, because this bounds a watchdog: too long
+        only delays a backstop that should never fire, while too short cuts
+        the operator off mid-word.
+        """
+        wpm = 20
+        r = self.cat.ask("KS")
+        if r and r.startswith("KS") and len(r) >= 6:
+            try:
+                wpm = max(8, min(50, int(r[2:5])))
+            except ValueError:
+                pass
+        return min(2 * (12 * len(text) / wpm) + 10.0, 240.0)
 
     def _cmd_cw_msg(self, args):
         # Args were split on commas, but commas are legal inside CW text,
         # so put them back.
         text = ",".join(args).strip()
-        if text:
-            self._cw_send(text)
-        return [], []
+        if not text:
+            return [], []
+        self._cw_send(text)
+        # SAY THAT THE RADIO IS TRANSMITTING, because now it is: the message
+        # is keyed by `TX;` rather than by VOX, and every loop that must not
+        # poll a transmitting radio -- the S-meter, the decoded text -- is
+        # gated on this state. It used to send CW with the state still
+        # reading receive, so those loops polled straight through the
+        # transmission. The matching `false` comes from the reconcile sweep
+        # once the radio is back and answering.
+        return [], [f"trx:0,{bool_str(self.state.transmitting)}"]
 
     def _cmd_cw_macros(self, args):
         return self._cmd_cw_msg(args)

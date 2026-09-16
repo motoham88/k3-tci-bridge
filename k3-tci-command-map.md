@@ -517,10 +517,22 @@ text into its buffer and then never transmits: no `?;`, no error, nothing on
 the air. Confirmed on the air.
 
 `VX` is stored per mode, so enabling it for CW does not disturb voice VOX.
-The bridge reads `VX;` before keying and enables it if needed, rather than
-warning — on a remote station there is nobody present to press the button.
 This sits alongside `MIC+LIN` (TX audio) as the second precondition whose
 only symptom is silence.
+
+**The bridge keys with `TX;` rather than relying on VOX**, and drops it with
+`RX;` queued behind the last chunk — the `W` form defers following commands
+until the message has been sent, so the unkey lands after the last element
+instead of cutting it off. That makes the T/R transition deterministic
+rather than a side effect of the first character arriving, and it means the
+bridge's transmit state is true while CW is going out, which every loop that
+must not poll a transmitting radio depends on.
+
+VOX remains the fallback: if `TX;` does not take, the bridge enables `VX1`
+and sends the text the old way rather than into silence. Nothing here waits
+for the message to finish — this runs under the lock that serialises every
+client's commands — so the PTT watchdog is armed with a generous estimate
+(PARIS timing, doubled, plus ten seconds) in case the queued `RX;` is lost.
 
 Use the `W` ("wait") form — `KYW<text>;` — not `KY <text>;`. It defers
 processing of following commands until the message has been sent, which

@@ -656,8 +656,31 @@ Recorded so the gaps are explicit rather than implied by absence.
 Bench session against the radio, via the Pi at 38400 baud. Firmware
 `RVM05.67`, radio on 20 m CW at the time.
 
-- **`ID017;`** returned as documented. Modem control lines are irrelevant —
-  all four DTR/RTS combinations work, so the bridge needn't manage them.
+- **`ID017;`** returned as documented.
+- **Modem control lines are NOT irrelevant, and this note used to say they
+  were.** All four DTR/RTS combinations worked in that session, and the
+  conclusion drawn — that the bridge needn't manage them — was true only
+  because the radio had both lines switched off at the time. The K3 can be
+  told to read DTR as KEY and RTS as PTT (its RS232 menu), and pyserial
+  asserts both lines by default when it opens a port. With DTR=KEY set at
+  the radio, starting the bridge is therefore a key-down that holds: a
+  carrier on the air from the moment the service starts, which at this
+  station took unplugging the USB lead to stop. The bridge now opens the
+  port with both lines low, before the port is open, so it is safe whatever
+  the radio is set to.
+
+  A caveat the fix does not cover: the tty layer raises DTR/RTS as the
+  device is opened, and pyserial lowers them immediately after, so a brief
+  assert at open is possible even now. That is a driver-level behaviour, not
+  something Python can get in front of. It is the difference between a held
+  carrier and a blip; with DTR=KEY intended for use, confirm it with TX TEST
+  on before trusting it.
+
+  Driving PTT from RTS is worth considering for one reason: it fails safe.
+  If the bridge process dies the line drops and the radio unkeys, where
+  `TX;` needs something still alive to send `RX;`. Keying CW from DTR is a
+  different matter — that would put CW element timing in Python on the Pi,
+  fed by a WebSocket, rather than in the radio's own keyer.
 - **The `IF` response decodes at every documented offset — but its LENGTH
   is not fixed.** The bench sample was 38 characters,
   `IF00014030000     -000000 0003000011 ;`, ending with a space before the

@@ -78,7 +78,30 @@ class K3Cat:
     # ---------- lifecycle ----------
 
     def open(self) -> None:
-        self._ser = serial.Serial(self.port, self.baud, timeout=0.1)
+        # BOTH MODEM LINES LOW, BEFORE THE PORT IS OPENED. pyserial asserts
+        # DTR and RTS by default, and the K3 can be told to read them as KEY
+        # and PTT (its RS232 menu). With DTR=KEY set at the radio, opening
+        # this port is a key-down: starting the bridge put a carrier on the
+        # air and held it, and it took unplugging the USB lead to stop --
+        # confirmed at this station, which is why the radio now sits at
+        # OFF/OFF. That workaround should not be what keeps it safe.
+        #
+        # The lines are configured rather than merely left alone: a port
+        # opened with them low is safe whatever the radio is set to, and it
+        # is also the precondition for ever driving PTT from RTS, which is
+        # fail-safe in a way CAT cannot be (the process dying drops the
+        # line, where `TX;` needs something still alive to send `RX;`).
+        #
+        # The old bench note read "modem control lines are irrelevant, the
+        # bridge needn't manage them". They were irrelevant in that session
+        # because the radio had them switched off.
+        self._ser = serial.Serial()
+        self._ser.port = self.port
+        self._ser.baudrate = self.baud
+        self._ser.timeout = 0.1
+        self._ser.dtr = False           # applied by open(), not after it
+        self._ser.rts = False
+        self._ser.open()
         time.sleep(0.2)
         self._ser.reset_input_buffer()
 

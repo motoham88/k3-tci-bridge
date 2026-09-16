@@ -93,63 +93,65 @@ than a specification sheet would.
 ### What the full 14 MHz sweep does and does not show
 
 `smcal2-14mhz.csv` is the sweep from -100 to -15 dBm, committed verbatim.
-Read it with one fact in front of you: **its level column is what the
-script suggested, not what anything measured.** Every `entered` value is
-the computed target to the last float digit, meaning Enter was pressed at
-each point, and there is no `p3_dbm` column. The partial run had the P3
-reading at every point and came out clean. This one was run without that
-control, and its three problems are exactly the kind the control exists to
-catch.
+Its `entered` column is the script's suggested level at every point, because
+Enter was pressed each time, and the file has no `p3_dbm` column. That looks
+like an unverified run, but it is not. **The P3 was the reference.** The
+CE-4000 struggled to make some levels, so the operator raised its output
+until the P3 read each 5 dB step, from -100 up to -25 dBm. The level column
+is therefore P3-measured through -25. Only **-20 and -15 dBm were not
+checked**. This comes from the bench notes, not the file, and the P3 values
+were not typed in. `smcal2.py` now prompts for them so the file carries the
+control itself next time.
 
 Run through `--fit` unedited, it reports a single line with 7 dB rms
 residual and declares the break at SMH 40 *"doing work"*. Do not believe
-that verdict. The outliers produce it.
+that verdict. The points below explain why.
 
-**The middle is consistent with the partial run.** From -85 to -45 dBm every
-point falls within about 2 counts of the P3-verified partial fit
-(`dBm = -118.64 + 1.2338*n`), and -85 to -70 on its own refits to
-`-118.86 + 1.2346*n`, within 0.2 dB of it. It carries on across SMH 40 with
-no visible change of slope up to about SMH 62. So the documented break at 40
-*may* not exist on this radio. That is a suggestion from unverified points,
-not a finding.
+**The middle agrees with the partial run.** From -85 to -45 dBm every point
+falls within about 2 counts of the partial fit (`dBm = -118.64 + 1.2338*n`),
+and -85 to -70 on its own refits to `-118.86 + 1.2346*n`. It carries on
+across SMH 40 with no visible change of slope up to about SMH 62. So on
+this radio the documented break at 40 may not be real.
 
-**The bottom three read about 15 dB high.** -100, -95 and -90 dBm read SMH
-30, 31 and 39. The fit wants 15, 19 and 23. Inverted through the fit, they
-look like -82, -81 and -71 dBm arriving at the radio. The noise-floor step
-just before read SMH 0, so it is not RF GAIN left down and not a floor
-problem. The likeliest story is a generator that was not at the level
-requested, e.g. an attenuator range not switched back after the floor step.
-The data alone cannot say.
+**The bottom three disagree with the partial run, at the same level.**
+-100, -95 and -90 dBm read SMH 30, 31 and 39. In the partial run, -105 read
+SMH 11 with the P3 reading -105. Both runs had the level confirmed on the
+P3, so the meter gave about 15 dB more for the same input. One difference
+between the runs is known: **the partial run used fast AGC (GT002), the full
+sweep slow (GT004)**. The meter follows the AGC line, and slow AGC holds a
+stronger level for a while after it goes away. Raising the generator to find
+each level could leave the meter still holding a stronger level when the
+1.5 s settle ended. That is a hypothesis, and it is testable. It fits the
+points that went wrong at the bottom, where the generator needed the most
+coaxing.
 
-**There is a 14.5-count jump between -40 and -35 dBm**, for 5 dB of input,
-and above it the points sit about 11 counts above the line. No receiver
-behaviour explains that. It looks like a step in the generator's output
-range.
+**There is a 14.5-count jump between -40 and -35 dBm**, for 5 dB of input
+confirmed on the P3, and above it the points sit about 11 counts above the
+line. The same slow-AGC hold is one candidate. It is unexplained.
 
-**-15 dBm reads lower than -20 dBm** (86.5 against 94). That is either the
-generator's top end or the receiver starting to compress. The P3 tells
-those apart and the SMH count cannot.
+**-15 dBm reads lower than -20 dBm** (86.5 against 94). Neither level was
+checked on the P3. Treat both as unverified.
 
 The half-count readings (64.5 at -40, 89.5 at -25, 86.5 at -15) mean the
-12 reads straddled two values. The meter was bouncing at the same points
-that misbehave.
+12 reads straddled two values. The meter was still moving at the same
+points that misbehave, which fits a settle that was too short.
 
 **Consequence: `bridge/tci.py` and the S-meter spec in
-`k3-tci-command-map.md` stay unchanged.** The hold was for want of the top
-half. It now stands because the top half exists but its levels are
-unverified. `smcal2.py` now prompts for the P3 reading at every point,
-records it as `p3_dbm`, and leaves any point that disagrees by more than
-1.5 dB out of the fit, so the control no longer depends on someone
-remembering it. The next step is a short re-measure of the suspect levels
-with the P3 read at each:
+`k3-tci-command-map.md` stay unchanged.** `smcal2.py` now prompts for the P3
+reading at every point, records it as `p3_dbm`, and leaves any point that
+disagrees by more than 1.5 dB out of the fit. The next step re-measures the
+suspect levels under both AGC settings, with a long settle so the hold has
+time to decay:
 
 ```
-python3 smcal2.py --levels -100,-95,-90,-40,-35,-15 --out smcal2-retest.csv
+python3 smcal2.py --agc GT004 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-slow.csv
+python3 smcal2.py --agc GT002 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-fast.csv
 ```
 
-If the P3 agrees with the generator and the counts repeat, the meter really
-does that and it is a finding. If the P3 disagrees, those rows were
-generator artifacts and the rest of the sweep is usable as it stands.
+If the bottom points come down to about SMH 15-23 with the longer settle,
+the sweep's outliers were AGC hold and the rest of it stands. If they
+repeat under both AGC settings with the P3 agreeing, the meter really does
+that. Either way the result is a finding.
 
 ## The pattern worth copying
 

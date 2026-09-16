@@ -286,6 +286,33 @@ def main():
               True, fails)
         check(f"nothing lost for {text[:18]!r}", "".join(chunks), text, fails)
 
+    print("\n=== the PTT deadline does not outlive the transmission ===")
+    # The CW path arms the watchdog in case its queued RX; goes missing.
+    # Nothing disarmed it when that RX; worked, so the watchdog fired into a
+    # radio already receiving -- and a deadline left lying around can fire
+    # into a LATER transmission, one started at the front panel, which sets
+    # no deadline of its own to overwrite it.
+    RX_IF = "IF00007020880     +000000 0003000001;"      # field 28 = 0
+    TX_IF = RX_IF[:28] + "1" + RX_IF[29:]
+    for label, msg, want in [
+        ("radio seen receiving: disarmed", RX_IF, None),
+        ("radio seen transmitting: kept",  TX_IF, 1234.0),
+    ]:
+        b = tci.Bridge(StubCat(None))
+        b._ptt_deadline = 1234.0
+        b.on_cat_event(msg)
+        check(label, b._ptt_deadline, want, fails)
+
+    print("\n=== the CW watchdog estimate covers the message ===")
+    # Too long only delays a backstop that should never fire; too short cuts
+    # the operator off mid-word. So it must exceed PARIS timing at any speed
+    # the K3 offers.
+    for wpm in (8, 20, 50):
+        for text in ["hello", "cq cq de kx3h k", "x" * 200]:
+            paris = 12 * len(text) / wpm
+            check(f"{len(text)} chars at {wpm} wpm covers {paris:.0f}s",
+                  tci.cw_seconds(text, wpm) > paris, True, fails)
+
     print("\n=== an S-meter count is range-checked before it is a signal ===")
     # Both curves are unbounded above -- SMH 999 converts to +853 dBm -- and
     # the UI clamps its bar at S9+60, so ANY over-range count paints the

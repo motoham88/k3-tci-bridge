@@ -50,6 +50,25 @@ def bool_str(v: bool) -> str:
     return "true" if v else "false"
 
 
+def cw_seconds(text: str, wpm: int) -> float:
+    """A generous upper bound on how long `text` takes to send.
+
+    PARIS timing: 50 dot units per five-character word, so ten units per
+    character, and a dot is 1.2/wpm seconds -- 12 * chars / wpm. Doubled
+    with ten seconds on top, because this bounds a watchdog: too long only
+    delays a backstop that should never fire, while too short cuts the
+    operator off mid-word.
+
+    NOT CAPPED. A ceiling of four minutes looked like prudence and was the
+    opposite: 200 characters at 8 WPM is five minutes of sending, so the cap
+    would have expired mid-message and forced the operator off the air --
+    the watchdog doing exactly the damage it exists to prevent. The estimate
+    is derived from the length and the speed, so it is already as large as
+    the message requires and no larger.
+    """
+    return 2 * (12 * len(text) / max(1, wpm)) + 10.0
+
+
 def ro_command(hz: int) -> str:
     """RIT/XIT offset -> `RO<sign><4 digits>`.
 
@@ -242,6 +261,7 @@ class Bridge:
             s.transmitting = r[28] == "1"
             s.mode = K3_TO_TCI.get(r[29], s.mode)
             s.split = r[32] == "1"
+            self._clear_deadline_if_receiving()
         except (ValueError, IndexError):
             log.warning("could not parse IF: %r", r)
 
@@ -811,6 +831,12 @@ class Bridge:
         # error, nothing on the air -- so if `TX;` does not take, the old
         # path runs rather than sending text into silence.
         vx = self.cat.ask("VX")
+        # The speed is read HERE, before any text is queued. Reading it
+        # afterwards -- which is where the watchdog estimate wanted it --
+        # asks a radio that is already deferring commands until the message
+        # has been sent, so it timed out every time and the estimate
+        # silently fell back to its default.
+        wpm = self._cw_wpm()
         keyed = False
         self.cat.send("TX")
         if self._await_tq(True):
@@ -875,26 +901,17 @@ class Bridge:
             # the transmission it is meant to protect. The state is cleared
             # the ordinary way, by the reconcile sweep reading IF once the
             # radio is answering commands again.
-            self._ptt_deadline = time.monotonic() + self._cw_seconds(text)
+            self._ptt_deadline = time.monotonic() + cw_seconds(text, wpm)
         return True
 
-    def _cw_seconds(self, text: str) -> float:
-        """A generous upper bound on how long `text` takes to send.
-
-        PARIS timing: 50 dot units per five-character word, so ten units per
-        character, and a dot is 1.2/wpm seconds -- 12 * chars / wpm. Doubled
-        with ten seconds on top, because this bounds a watchdog: too long
-        only delays a backstop that should never fire, while too short cuts
-        the operator off mid-word.
-        """
-        wpm = 20
+    def _cw_wpm(self, default: int = 20) -> int:
         r = self.cat.ask("KS")
         if r and r.startswith("KS") and len(r) >= 6:
             try:
-                wpm = max(8, min(50, int(r[2:5])))
+                return max(8, min(50, int(r[2:5])))
             except ValueError:
                 pass
-        return min(2 * (12 * len(text) / wpm) + 10.0, 240.0)
+        return default
 
     def _cmd_cw_msg(self, args):
         # Args were split on commas, but commas are legal inside CW text,
@@ -1190,6 +1207,24 @@ class Bridge:
 
     # ---------- background duties ----------
 
+    def _clear_deadline_if_receiving(self) -> None:
+        """A radio seen in receive has no stuck transmitter to rescue.
+
+        The CW path arms the watchdog against its queued `RX;` going
+        missing, and nothing used to disarm it when that `RX;` worked: the
+        radio unkeyed at the end of the message and the watchdog fired
+        anyway, sixteen seconds later, forcing an RX into a radio already
+        receiving and logging it as an expiry. Harmless in itself, but a
+        deadline left lying around is one that can fire into a LATER
+        transmission -- one started at the front panel, which sets no
+        deadline of its own to overwrite it.
+
+        Called from wherever the radio's own transmit state is read.
+        """
+        if self._ptt_deadline is not None and not self.state.transmitting:
+            self._ptt_deadline = None
+            self._ptt_owner = None
+
     def ptt_watchdog(self) -> str | None:
         """Force RX if a client keyed us and then went away. This is the one
         place where a dropped connection leaves the radio in a physically
@@ -1266,5 +1301,6 @@ class Bridge:
             s.transmitting = r[28] == "1"
             s.mode = K3_TO_TCI.get(r[29], s.mode)
             s.split = r[32] == "1"
+            self._clear_deadline_if_receiving()
         except (ValueError, IndexError):
             pass

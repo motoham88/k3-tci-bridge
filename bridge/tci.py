@@ -930,14 +930,6 @@ class Bridge:
                     self.cat.set_verified("VX1", "VX", "VX1;")
             self._cw_keyed = keyed
 
-        # INSTRUMENTATION, while the dropped-first-character report is open.
-        # Nothing about that failure is visible after the fact: the message
-        # is on the air and gone, and the only record of what the bridge
-        # actually wrote is this. It says whether the first character left
-        # here at all -- which splits the bug in half.
-        log.info("cw: text=%r chunks=%r vx=%s queued_behind=%s",
-                 text, chunks, vx, already_sending)
-
         with self._cw_lock:
             if self._cw_thread is None or not self._cw_thread.is_alive():
                 self._cw_thread = threading.Thread(
@@ -997,7 +989,13 @@ class Bridge:
                 if not self._cw_wait_for_room(chunk, wpm):
                     break                      # stopped while waiting
                 out = "KYW" + chunk      # the chunk already carries its space
-                log.info("cw: write %r (%d left)", out, remaining)
+                # DEBUG, not INFO. This was the instrumentation for the
+                # dropped-first-character report: what the bridge actually
+                # wrote, which nothing else records once a message is on the
+                # air and gone. It answered that question -- the text left
+                # here intact every time -- so it goes quiet rather than
+                # away. If the fault returns, `-v` brings it straight back.
+                log.debug("cw: write %r (%d left)", out, remaining)
                 self.cat.send(out)
         except Exception:
             log.exception("CW worker failed")

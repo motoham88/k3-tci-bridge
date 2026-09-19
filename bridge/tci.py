@@ -169,6 +169,8 @@ class RadioState:
         self.att = False            # a single 10 dB pad on this K3: RA00/RA01
         self.nb = False
         self.nb_levels = (0, 0)     # NL: DSP blanker, IF blanker, 00-21 each
+        self.nr = False             # from DS only -- see refresh_display
+        self.notch = "off"          # off / auto / manual, likewise
 
 
 class Bridge:
@@ -233,6 +235,7 @@ class Bridge:
         self.refresh_tm()
         self.refresh_agc()
         self.refresh_rx_frontend()
+        self.refresh_display()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -378,6 +381,7 @@ class Bridge:
             f"mute:0,{bool_str(s.muted)}",
             f"agc_mode:0,{s.agc}",
             *self.rx_frontend_notifications(),
+            *self.display_notifications(),
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1424,19 +1428,49 @@ class Bridge:
     def _cmd_rx_nb_enable(self, args):
         return self._set_frontend(args, "NB1", "NB0", "NB")
 
-    # -- NR and notch: taps, with no state -----------------------------------
+    # -- NR and notch -----------------------------------------------------
     # The K3 has no NR or notch command, only the front-panel switches
-    # (SWT34 = NR, SWT32 = NTCH, programmer's reference Table 7), and their
-    # on/off state is readable only from DS's icon byte -- binary, which the
-    # line reader deliberately does not take (command map, rule 7). So these
-    # press the button and claim nothing about the result.
+    # (SWT34 = NR, SWT32 = NTCH, programmer's reference Table 7). Their
+    # state is only in DS's icon-flash byte, which the reader frames by
+    # length for exactly this (K3Cat.ask_display). So a press is still a
+    # press -- the radio decides what NTCH cycles to -- but what it landed
+    # on is read back and reported.
+    #
+    # AI2 does not report either switch, so a press at the radio reaches
+    # clients through the server's reconcile sweep, within about 3 s.
+
+    # Icon-flash byte, K31 (programmer's reference, DS).
+    DS_NR, DS_NTCH, DS_MAN_NOTCH = 0x04, 0x02, 0x01
+
+    def refresh_display(self) -> None:
+        r = self.cat.ask_display(quiet=self.state.transmitting)
+        if not r or not r.startswith("DS") or len(r) < 13:
+            log.debug("refresh_display: no usable DS reply (%r)", r)
+            return
+        f = ord(r[11])
+        if not f & 0x80:
+            # Bit 7 is always set in both icon bytes; a clear one means the
+            # frame is not what we think it is. Leave the state alone.
+            log.debug("refresh_display: icon byte %#x lacks bit 7", f)
+            return
+        s = self.state
+        s.nr = bool(f & self.DS_NR)
+        s.notch = ("manual" if f & self.DS_MAN_NOTCH else
+                   "auto" if f & self.DS_NTCH else "off")
+
+    def display_notifications(self) -> list[str]:
+        s = self.state
+        # rx_nr_enable is TCI's; notch is the bridge's own, because TCI's
+        # rx_anf_enable has no way to say "manual".
+        return [f"rx_nr_enable:0,{bool_str(s.nr)}", f"notch:0,{s.notch}"]
 
     def _tap(self, code):
         if self.state.transmitting:
             return [], []
         self.cat.send(f"SWT{code}")
-        time.sleep(0.1)       # switch emulation wants a gap before the next
-        return [], []
+        time.sleep(0.25)      # switch emulation wants a gap before the next
+        self.refresh_display()
+        return [], self.display_notifications()
 
     def _cmd_nr_tap(self, args):
         return self._tap(34)

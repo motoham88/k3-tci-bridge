@@ -4,8 +4,9 @@ One serial port carries two kinds of traffic: replies to our own GETs, and
 unsolicited AI2 messages the radio emits when the operator touches the front
 panel. A single reader thread parses every ';'-terminated message and routes
 it -- to a waiting request if one matches, otherwise to the event callback.
-`TB` is the one exception: its decoded text may itself contain semicolons,
-so it is framed by the character count it carries. See `ask_text`.
+`TB` and `DS` are the exceptions, framed by length rather than by ';'.
+TB's decoded text may itself contain semicolons (see `ask_text`); DS carries
+bytes with bit 7 set, which text decoding would destroy (see `ask_display`).
 
 Implements the global rules from k3-tci-command-map.md:
   * K31 + K20 at startup
@@ -34,7 +35,7 @@ def cmd_prefix(s: str) -> str:
     return (m.group(1) + m.group(2)) if m else ""
 
 
-# Outstanding TB replies tolerated before assuming they are lost. Poll
+# Outstanding counted replies tolerated before assuming they are lost. Poll
 # intervals are longer than the request timeout, so this only grows when the
 # radio is deferring commands, and only by one per poll.
 _TB_MAX_OWED = 3
@@ -57,6 +58,18 @@ def _tb_len(buf: bytes) -> int | None:
     except ValueError:
         return None
     return 5 + rr + 1
+
+
+# `DSttttttttaf;` -- 8 display bytes, the icon byte and the icon-flash byte
+# (K31: more icons), then the terminator. Fixed length.
+_DS_LEN = 13
+
+# Replies framed by length rather than ';': prefix -> header bytes needed
+# before the length is known, and the function that reads it.
+_COUNTED = {
+    b"TB": (5, _tb_len),
+    b"DS": (2, lambda buf: _DS_LEN),
+}
 
 
 def open_serial(port: str, baud: int = 38400,
@@ -96,8 +109,9 @@ class K3Cat:
         self._reader: threading.Thread | None = None
         # echo-loop guard: prefix -> expiry time
         self._recent_sets: dict[str, float] = {}
-        # TB replies asked for but not yet consumed; see _read_loop.
+        # Counted replies asked for but not yet consumed; see _read_loop.
         self._tb_owed = 0
+        self._ds_owed = 0
         self.tx_test: bool | None = None
 
     # ---------- lifecycle ----------
@@ -198,16 +212,28 @@ class K3Cat:
                 # Scoped as tightly as possible: the radio never sends TB
                 # unsolicited (it is GET only), so this path can only open
                 # for a reply we asked for.
-                if self._tb_owed and buf.startswith(b"TB") and len(buf) >= 5:
-                    need = _tb_len(buf)
-                    if need is None:            # malformed count: fall
-                        self._tb_owed = 0       # through and resync on ';'
-                    elif len(buf) < need:
-                        break                   # rest of the text in flight
+                #
+                # DS takes the same path for a different reason: its icon
+                # bytes have bit 7 set and would not survive ASCII decoding,
+                # so the frame is decoded as Latin-1, which keeps every byte
+                # as the code point of the same value. Also GET only.
+                head = bytes(buf[:2])
+                owed_attr = {b"TB": "_tb_owed", b"DS": "_ds_owed"}.get(head)
+                hdr, length = _COUNTED.get(head, (0, None))
+                if owed_attr and getattr(self, owed_attr) and len(buf) >= hdr:
+                    need = length(buf)
+                    if need is not None and len(buf) < need:
+                        break                   # rest of the frame in flight
+                    if need is None or buf[need - 1] != ord(";"):
+                        # Malformed count, or a frame that does not end
+                        # where it says: fall through and resync on ';'.
+                        setattr(self, owed_attr, 0)
                     else:
-                        msg = bytes(buf[:need]).decode("ascii", "replace")
+                        codec = "latin-1" if head == b"DS" else "ascii"
+                        msg = bytes(buf[:need]).decode(codec, "replace")
                         buf = bytearray(buf[need:])
-                        self._tb_owed -= 1
+                        owed = getattr(self, owed_attr) - 1
+                        setattr(self, owed_attr, owed)
                         # Only the NEWEST reply answers the request now in
                         # flight. Anything still owed behind this one means
                         # it belongs to a request that timed out and was
@@ -217,10 +243,11 @@ class K3Cat:
                         # ';'. Frame it either way -- that is what keeps a
                         # semicolon in the text out of the command stream --
                         # but drop it rather than dispatch it.
-                        if self._tb_owed == 0:
+                        if owed == 0:
                             self._dispatch(msg)
                         else:
-                            log.debug("dropped stale TB reply: %r", msg)
+                            log.debug("dropped stale %s reply: %r",
+                                      head.decode(), msg)
                         continue
                 if b";" not in buf:
                     break
@@ -308,19 +335,37 @@ class K3Cat:
         number of characters instead of stopping at the first semicolon.
         See _read_loop for why that matters.
         """
+        return self._ask_counted("TB", "_tb_owed", timeout, quiet=False)
+
+    def ask_display(self, timeout: float = 0.6,
+                    quiet: bool = False) -> str | None:
+        """`DS;` -- VFO A's display and icons, framed by length.
+
+        Returns the 13-character `DSttttttttaf;` response decoded as
+        Latin-1, so `ord()` of each icon character is the radio's byte;
+        or `'?;'`, or None on timeout.
+
+        The icon-flash byte `f` is the only place the K3 reports main-RX NR
+        and the notch (K31 in effect, which open() ensures). `quiet` as for
+        ask().
+        """
+        return self._ask_counted("DS", "_ds_owed", timeout, quiet)
+
+    def _ask_counted(self, cmd: str, owed_attr: str, timeout: float,
+                     quiet: bool) -> str | None:
         q: queue.Queue = queue.Queue(maxsize=1)
         with self._tx_lock:
-            if self._tb_owed >= _TB_MAX_OWED:
+            if getattr(self, owed_attr) >= _TB_MAX_OWED:
                 # Replies that never came at all, which should not happen --
-                # TB always answers. Assume they are gone rather than
+                # both always answer. Assume they are gone rather than
                 # discarding every future reply as stale forever.
-                log.warning("%d TB replies never arrived; resyncing",
-                            self._tb_owed)
-                self._tb_owed = 0
+                log.warning("%d %s replies never arrived; resyncing",
+                            getattr(self, owed_attr), cmd)
+                setattr(self, owed_attr, 0)
             with self._pending_lock:
-                self._pending = ("TB", q)
-            self._tb_owed += 1
-            self._ser.write(b"TB;")
+                self._pending = (cmd, q)
+            setattr(self, owed_attr, getattr(self, owed_attr) + 1)
+            self._ser.write(cmd.encode() + b";")
             self._ser.flush()
             try:
                 r = q.get(timeout=timeout)
@@ -332,11 +377,12 @@ class K3Cat:
                 # semicolon in the abandoned text cannot reach the command
                 # stream, and it knows to drop that reply rather than hand
                 # it to whoever asks next.
-                log.warning("timeout waiting for TB")
+                (log.debug if quiet else log.warning)(
+                    "timeout waiting for %s", cmd)
                 return None
-            if r and not r.startswith("TB"):
-                # '?;' answered the request, so no TB frame is coming for it.
-                self._tb_owed = max(0, self._tb_owed - 1)
+            if r and not r.startswith(cmd):
+                # '?;' answered the request, so no frame is coming for it.
+                setattr(self, owed_attr, max(0, getattr(self, owed_attr) - 1))
             return r
 
     def set_verified(self, set_cmd: str, query: str, expect: str,

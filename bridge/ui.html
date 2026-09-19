@@ -94,9 +94,6 @@ button.on{background:var(--accent); border-color:var(--accent); color:#06121f; f
 button:disabled{opacity:.45; cursor:not-allowed}
 .modes{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
 .steps{display:grid; grid-template-columns:repeat(5,1fr); gap:6px}
-/* NR and NTCH are presses, not switches: nothing can read their state back,
-   so they must not look like the toggles beside them. */
-button.tap{border-style:dashed}
 #ritrow{display:grid; grid-template-columns:1fr 1fr .8fr 1.2fr .8fr 1fr; gap:6px; margin-top:8px}
 #ritoff{font-family:var(--mono); font-size:13px; text-align:center; align-self:center}
 #nbhint{color:var(--warn); font-size:12px; margin-top:4px}
@@ -172,8 +169,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button id="pre">PRE</button>
     <button id="att">ATT</button>
     <button id="nb">NB</button>
-    <button id="nr" class="tap" title="Presses NR on the radio. Its on/off state cannot be read remotely -- listen for it.">NR</button>
-    <button id="ntch" class="tap" title="Presses NTCH on the radio. Its on/off state cannot be read remotely -- listen for it.">NTCH</button>
+    <button id="nr" title="Presses NR on the radio">NR</button>
+    <button id="ntch" title="Presses NTCH on the radio, which cycles it">NTCH</button>
   </div>
   <div id="nbhint"></div>
   <div id="ritrow">
@@ -293,7 +290,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 // ws:// socket from an https:// page, and the bridge speaks ws://.
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
-            pre:false, att:false, nb:false, nbLevels:[0,0],
+            pre:false, att:false, nb:false, nbLevels:[0,0], nr:false, notch:"off",
             rit:false, xit:false, ritOffset:0, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
@@ -390,6 +387,8 @@ function onText(msg){
     case "preamp":      S.pre = args[1] === "true"; paintRx(); break;
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
+    case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
+    case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
     case "rit_enable":  S.rit = args[1] === "true"; paintRit(); break;
     case "xit_enable":  S.xit = args[1] === "true"; paintRit(); break;
@@ -716,8 +715,12 @@ $("#split").onclick = () => send(`split_enable:0,${S.split ? "false" : "true"}`)
 $("#agc").onclick = () => send(`agc_mode:0,${S.agc === "fast" ? "slow" : "fast"}`);
 
 // ── receive front end ─────────────────────────────────────────────────────
-// PRE, ATT and NB light from what the radio reports, so a band change --
-// they are stored per band -- or a press at the radio shows here too.
+// All five light from what the radio reports, so a band change -- PRE, ATT
+// and NB are stored per band -- or a press at the radio shows here too.
+// NR and NTCH are presses rather than set-to-state: the radio has no
+// command for either, only the switch, and decides what NTCH cycles to.
+// The bridge reads back where it landed; a press at the radio arrives
+// within the bridge's 3 s sweep.
 $("#pre").onclick = () => send(`preamp:0,${!S.pre}`);
 $("#att").onclick = () => send(`attenuator:0,${!S.att}`);
 $("#nb").onclick  = () => send(`rx_nb_enable:0,${!S.nb}`);
@@ -727,6 +730,9 @@ function paintRx(){
   $("#pre").classList.toggle("on", S.pre);
   $("#att").classList.toggle("on", S.att);
   $("#nb").classList.toggle("on", S.nb);
+  $("#nr").classList.toggle("on", S.nr);
+  $("#ntch").classList.toggle("on", S.notch !== "off");
+  $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // NB1 with both blanker levels at 00 blanks nothing.
   $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]
     ? "NB is on but both blanker levels are 0, so it does nothing. Hold NB"

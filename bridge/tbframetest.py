@@ -2,7 +2,8 @@
 """Parsing that no radio can be in the loop for. The only test here that
 runs without one.
 
-Covers the `TB` decoded-text path and the `IF` length guard. They share a
+Covers the `TB` decoded-text path, the `DS` icon path and the `IF` length
+guard. They share a
 file because they share a failure mode rather than a feature: both are
 parsing bugs that produce no error, no log line and no visible breakage --
 the kind that survives for months because everything downstream keeps
@@ -73,6 +74,9 @@ class StubCat:
         self.rts = False                # the PTT line, as the radio sees it
 
     def ask_text(self, timeout=0.6):
+        return self.reply
+
+    def ask_display(self, timeout=0.6, quiet=False):
         return self.reply
 
     def ask(self, cmd, timeout=0.6, quiet=False):
@@ -231,6 +235,56 @@ def main():
         ("unreadable byte", "\ufffd",           "%EF%BF%BD"),
     ]:
         check(label, tci.tci_escape(raw), want, fails)
+
+    print("\n=== DS framing keeps the high bytes ===")
+    # The icon bytes always have bit 7 set, and the display bytes can too
+    # (a decimal point). ASCII decoding turned all of them into U+FFFD, which
+    # is why DS was kept out of the reader until it was framed by length.
+    # 0x3B is ';' -- legal as a display byte, and it must not end the frame.
+    ds = b"DS" + b"14\xb03;59@" + bytes([0x80 | 0x10, 0x80 | 0x06]) + b";"
+    assert len(ds) == k3cat._DS_LEN
+    for label, chunk in [("whole", 256), ("byte by byte", 1)]:
+        cat, ser, events = make_cat(chunk)
+        ser.replies[b"DS;"] = ds
+        got = cat.ask_display(timeout=2.0)
+        check(f"DS {label}", got, ds.decode("latin-1"), fails)
+        check(f"DS {label}: nothing unsolicited", events, [], fails)
+        check(f"DS {label}: nothing left owed", cat._ds_owed, 0, fails)
+        cat._stop.set()
+
+    cat, ser, events = make_cat()
+    ser.replies[b"DS;"] = ds + b"FA00007050000;"
+    cat.ask_display(timeout=2.0)
+    time.sleep(0.1)
+    check("DS: the reader stays in sync", events, ["FA00007050000;"], fails)
+    cat._stop.set()
+
+    # A frame that does not end where its length says resyncs on ';'
+    # rather than handing a misaligned frame to the parser.
+    cat, ser, events = make_cat()
+    ser.replies[b"DS;"] = b"DS1234567;"
+    got = cat.ask_display(timeout=0.5)
+    check("DS short frame: not delivered as DS", (got or "").startswith("DS")
+          and len(got) == 13, False, fails)
+    cat._stop.set()
+
+    print("\n=== NR and notch read from the icon-flash byte ===")
+    for label, f, nr, notch in [
+        ("all off",      0x80,               False, "off"),
+        ("NR on",        0x80 | 0x04,        True,  "off"),
+        ("auto notch",   0x80 | 0x02,        False, "auto"),
+        ("manual notch", 0x80 | 0x03,        False, "manual"),
+        ("everything",   0x80 | 0x07,        True,  "manual"),
+        ("other icons",  0x80 | 0x38,        False, "off"),
+    ]:
+        b = tci.Bridge(StubCat(("DS" + "@" * 8 + chr(0x80) + chr(f) + ";")))
+        b.refresh_display()
+        check(f"DS {label}", (b.state.nr, b.state.notch), (nr, notch), fails)
+    b = tci.Bridge(StubCat("DS" + "@" * 8 + "@" + "\x04" + ";"))
+    b.state.nr, b.state.notch = False, "auto"
+    b.refresh_display()
+    check("DS without bit 7 leaves state alone",
+          (b.state.nr, b.state.notch), (False, "auto"), fails)
 
     print("\n=== IF is checked for the fields read, not a total length ===")
     # Found twice now. refresh_if had `len(r) < 38` and rejected every reply

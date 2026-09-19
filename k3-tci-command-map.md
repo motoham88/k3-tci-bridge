@@ -132,9 +132,16 @@ sub-RX-as-trx-1 path stays unwritten until the hardware changes.
 
 ### 7. Serial reader stays ASCII
 
-v1 does not use `DS` (VFO A text/icons) or `IC` (icon/status). Both return
-bytes ≥ 0x80 and must be read as binary, not text. Skipping them keeps the
-whole reader line-oriented on `;`. Don't add them casually.
+`DS` (VFO A text/icons) and `IC` (icon/status) return bytes ≥ 0x80 and must
+be read as binary, not text. `IC` is read once at open, before the reader
+thread starts (for TX TEST). `IC` stays out of the running reader.
+
+**`DS` is the second exception, framed by length** like `TB` below: a fixed
+13 bytes, `DSttttttttaf;`, decoded as Latin-1 so every byte keeps its value.
+It is the only source of main-RX NR and notch state (icon-flash byte `f`,
+K31: B2 NR, B1 NTCH, B0 manual notch). The path opens only while a `DS` GET
+is outstanding, and a frame whose 13th byte is not `;` resyncs on `;`
+rather than being parsed.
 
 **`TB` is the one exception, and it is framed by count, not by `;`.** Its
 decoded text may legally contain semicolons (see *Text decode* below), so
@@ -467,7 +474,7 @@ slow and cite the caution above.
 | `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL`; and `NB1` with `NL0000` blanks nothing, so the bridge also broadcasts `nb_levels` |
 | `preamp:0,<bool>` (bridge's own) | `PA1;` / `PA0;` | `PA;` | — | Reported on band change and by AI2 |
 | `attenuator:0,<bool>` (bridge's own) | `RA01;` / `RA00;` | `RA;` | — | One 10 dB pad on this K3 |
-| `nr_tap:0` / `notch_tap:0` (bridge's own) | `SWT34;` / `SWT32;` | **none** | — | No NR or notch command exists; state is only in `DS`'s icon byte (K31), which rule 7 keeps out of the reader. Taps, not toggles. Refused while transmitting |
+| `nr_tap:0` / `notch_tap:0` (bridge's own) | `SWT34;` / `SWT32;` | `DS;` byte `f` | — | No NR or notch command exists, so these press the switch; the result is read back and broadcast as `rx_nr_enable` (TCI's) and `notch:0,off\|auto\|manual` (the bridge's own). AI2 reports neither, so front-panel presses arrive via the 3 s reconcile sweep. Refused while transmitting |
 | `rx_nb_param:0,0,<0-100>` | `NL<dd><ii>;` | `NL;` | scale to 00-21 each | `dd` = DSP NB level, `ii` = IF NB level |
 | `lock:0,<bool>` | `LK1;` / `LK0;` | `LK;` | — | VFO A lock; `LK$` is VFO B |
 
@@ -788,7 +795,8 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
 - **PRE and ATT pressed at the radio** reach the web UI unprompted, through
   AI2 — the operator watched both follow.
 - **`SWT34` (NR) and `SWT32` (NTCH)** each tap the switch and cycle it,
-  confirmed by ear by the operator. State is still unreadable without `DS`.
+  confirmed by ear by the operator. Their state is now read from `DS`
+  (see rule 7).
 - **`BN00`-`BN10`** each land inside the band `tci.BANDS` gives them, and an
   off-band `FA` sticks as that band's memory (`bandtest.py`; see the note
   under *Frequency and VFO*).

@@ -469,10 +469,14 @@ def main():
     # tell one from the other, which is why it is caught here: a pinned
     # meter is over in a fifth of a second and leaves nothing behind.
     for label, asks, want in [
-        ("SMH at S1",            {"SMH": "SMH005;"}, -121),
-        ("SMH at S9",            {"SMH": "SMH040;"},  -73),
-        ("SMH at S9+60",         {"SMH": "SMH100;"},  -13),
-        ("SMH at full scale",    {"SMH": "SMH140;"},   27),
+        # Expected values follow the generator calibration in read_smeter
+        # (S9 = SMH 37, bend at 55), not the programmer's reference anchors,
+        # which read 3-8 dB low on this radio.
+        ("SMH near the floor",   {"SMH": "SMH005;"}, -113),
+        ("SMH at S9",            {"SMH": "SMH037;"},  -73),
+        ("SMH just above bend",  {"SMH": "SMH056;"},  -51),
+        ("SMH at S9+60",         {"SMH": "SMH104;"},  -13),
+        ("SMH at full scale",    {"SMH": "SMH140;"},   15),
         ("SMH over full scale",  {"SMH": "SMH141;"},  None),
         ("SMH wildly over",      {"SMH": "SMH999;"},  None),
         ("SMH not a number",     {"SMH": "SMHxyz;"},  None),

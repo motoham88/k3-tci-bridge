@@ -86,7 +86,7 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
   color:var(--ink); font-family:var(--mono); font-size:15px}
 /* Held, not tapped: no long-press menu or text selection under the finger. */
 #rev{touch-action:none; -webkit-touch-callout:none}
-/* "XFIL: 2.7k" on one line even at 360 px: less side padding, no wrap. */
+/* "XFIL: FL3" on one line even at 360 px. */
 #xfil{padding-left:4px; padding-right:4px; white-space:nowrap}
 #bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
 #bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
@@ -436,7 +436,7 @@ function onText(msg){
     case "ant":         S.ant = +args[1] || 0; paintRx(); break;
     case "rx_ant":      S.rxAnt = args[1] === "true"; paintRx(); break;
     case "if_shift":    S.ifc = +args[1] || 0; paintShift(); break;
-    case "xfil":        S.xfil = +args[1] || 0; S.xfilHz = +args[2] || 0; paintRx(); break;
+    case "xfil":        S.xfil = +args[1] || 0; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
     case "sql_enable":  S.sqlOn = args[1] === "true"; paintSql(); break;
@@ -873,14 +873,9 @@ function paintRx(){
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // Not a switch with an off, so never lit: it names the crystal in use.
-  // Says what the button is, then the crystal's width, which is what
-  // matters, over its slot number.
-  const xf = $("#xfil");
-  if (!S.xfil) xf.textContent = "XFIL";
-  else {
-    const w = S.xfilHz ? (S.xfilHz >= 1000 ? (S.xfilHz/1000) + "k" : S.xfilHz) : "XFIL";
-    xf.innerHTML = `XFIL: ${w}<br><span class="sub">FL${S.xfil}</span>`;
-  }
+  // Just the slot: the width it holds is already on the Filter row and
+  // the WIDTH slider, so repeating it here only cost space.
+  $("#xfil").textContent = S.xfil ? `XFIL: FL${S.xfil}` : "XFIL";
   // NB1 with both blanker levels at 00 blanks nothing.
   $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]
     ? "NB is on but both blanker levels are 0, so it does nothing. Hold NB"
@@ -905,7 +900,7 @@ function paintRit(){
 // to the carrier is mode-dependent: SSB is offset, CW/AM/FM straddle it.
 const FILTERS = {
   ssb:[[300,2700,"2.7k"],[300,2400,"2.4k"],[300,1800,"1.8k"],[400,1200,"800"],[300,3600,"3.6k"]],
-  // The station's crystals are 2.7k, 500 and 250 (tci.XFIL_WIDTHS); the
+  // The station's crystals are 2.7k (FL3), 500 (FL4) and 250 (FL5); the
   // presets land on them, plus 400 and 100 for the DSP alone.
   cw: [[-1350,1350,"2.7k"],[-250,250,"500"],[-200,200,"400"],[-125,125,"250"],[-50,50,"100"]],
   am: [[-3000,3000,"6.0k"],[-2400,2400,"4.8k"],[-1500,1500,"3.0k"],[-1000,1000,"2.0k"],[-4000,4000,"8.0k"]],

@@ -1525,14 +1525,8 @@ class Bridge:
     # AI2 is not known to report XF, so a press at the radio arrives through
     # the server's reconcile sweep.
 
-    # What is fitted in each slot at this station, in Hz, from the operator.
-    # The radio cannot report it over CAT, so a filter swap means an edit
-    # here. Slots not listed are empty (the tap skips them anyway).
-    XFIL_WIDTHS = {3: 2700, 4: 500, 5: 250}
-
     def xfil_notification(self) -> str:
-        n = self.state.xfil
-        return f"xfil:0,{n},{self.XFIL_WIDTHS.get(n, 0)}"
+        return f"xfil:0,{self.state.xfil}"
 
     def refresh_xfil(self) -> None:
         r = self.cat.ask("XF")

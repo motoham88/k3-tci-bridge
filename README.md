@@ -11,7 +11,7 @@ BAND, AGC, PRE/ATT, NB, NR, NTCH, RIT/XIT.*
 
 <table>
 <tr>
-<td><img src="screenshots/web-ui-top.png" alt="Web UI, top: S-meter, frequency with tuning strip and band buttons, mode, filter presets, width and SHIFT sliders, AGC, lock, preamp, attenuator, NB, NR, notch, crystal filter, squelch and RIT/XIT" width="320"></td>
+<td><img src="screenshots/web-ui-top.png" alt="Web UI, top: S-meter, frequency with A>B, hold-to-listen REV, typed entry, tuning strip and band buttons, mode, filter presets, width and SHIFT sliders, AGC, lock, preamp, attenuator, NB, NR, notch, crystal filter, RX antenna, squelch and RIT/XIT" width="320"></td>
 <td><img src="screenshots/web-ui-bottom.png" alt="Web UI, bottom: decoded text, CW keyer with macros, audio and power, TX audio meters, PTT and log" width="320"></td>
 </tr>
 </table>

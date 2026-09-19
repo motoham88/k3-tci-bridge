@@ -70,11 +70,17 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #wheel.live{border-color:var(--accent)}
 /* LOCK: the radio's lock does not stop CAT (measured), so the page stops
    itself, and shows that it has. */
-.locked #freq, .locked #wheel, .locked #wrate, .locked .steps, .locked #bands{
+.locked #freq, .locked #wheel, .locked #wrate, .locked .steps, .locked #bands, .locked #vforow{
   opacity:.4; cursor:not-allowed}
 #wheel.live #ticks{opacity:.9}
 #wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
 #wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
+#vforow{display:grid; grid-template-columns:1fr 1fr 2fr 1fr; gap:6px; margin-top:6px}
+#fent{background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+  border-radius:8px; padding:0 10px; font-family:var(--mono); font-size:15px; min-width:0}
+#fent.bad{border-color:var(--off)}
+/* Held, not tapped: no long-press menu or text selection under the finger. */
+#rev{touch-action:none; -webkit-touch-callout:none}
 #bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
 #bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
 
@@ -158,6 +164,12 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button data-step="1000">+1k</button>
     <button id="ab">A⇄B</button>
   </div>
+  <div id="vforow">
+    <button id="abcopy" title="Copy VFO A to VFO B, as A&gt;B does on the radio">A&gt;B</button>
+    <button id="rev" title="Hold to listen on VFO B">REV</button>
+    <input id="fent" inputmode="decimal" autocomplete="off" placeholder="7.030 / 7030">
+    <button id="fgo">Go</button>
+  </div>
   <div id="wheel"><div id="ticks"></div><div class="mark"></div></div>
   <div id="wrate"></div>
   <div id="bands"></div>
@@ -187,13 +199,14 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <span class="sub" id="ifinfo"></span>
   </div>
   <div class="lbl" style="margin:10px 0 6px">Receive</div>
-  <div class="steps" style="grid-template-columns:repeat(6,1fr)">
+  <div class="steps" style="grid-template-columns:repeat(4,1fr)">
     <button id="pre">PRE</button>
     <button id="att">ATT</button>
     <button id="nb">NB</button>
     <button id="nr" title="Presses NR on the radio">NR</button>
     <button id="ntch" title="Presses NTCH on the radio, which cycles it">NTCH</button>
     <button id="xfil" title="Presses XFIL on the radio: next crystal filter">XFIL</button>
+    <button id="rxant" title="Receive on the RX ANT input">RX ANT</button>
   </div>
   <div id="nbhint"></div>
   <div class="row" style="margin-top:8px">
@@ -314,7 +327,7 @@ const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
             pre:false, att:false, nb:false, nbLevels:[0,0], nr:false, notch:"off",
             rit:false, xit:false, ritOffset:0,
-            sqlOn:false, sqlLevel:0, lock:false, xfil:0, tx:false, audio:false,
+            sqlOn:false, sqlLevel:0, lock:false, xfil:0, rxAnt:false, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -411,6 +424,7 @@ function onText(msg){
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
+    case "rx_ant":      S.rxAnt = args[1] === "true"; paintRx(); break;
     case "if_shift":    S.ifc = +args[1] || 0; paintShift(); break;
     case "xfil":        S.xfil = +args[1] || 0; S.xfilHz = +args[2] || 0; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
@@ -726,6 +740,59 @@ $("#declear").onclick = decodeIdle;
 
 document.querySelectorAll("[data-step]").forEach(b =>
   b.onclick = () => step(+b.dataset.step));
+// ── A>B, REV, frequency entry ─────────────────────────────────────────────
+$("#abcopy").onclick = () => { if (!S.lock) send("ab_copy:0"); };
+
+// REV, held. The radio's own REV (SWT12) changes nothing CAT can see, so
+// its state could not be shown here (measured; see tci._cmd_ab_copy). This
+// does what REV is for instead: while held, A and B swap, so you listen on
+// B; on release they swap back to exactly what they were. Frequencies
+// only -- modes stay put, which is right for same-mode split work.
+let revHeld = null;                             // [a, b] while held
+function revDown(e){
+  if (revHeld || S.lock || S.tx || !S.vfoB) return;
+  e.preventDefault();
+  try { $("#rev").setPointerCapture(e.pointerId); } catch (err) {}
+  revHeld = [S.vfoA, S.vfoB];
+  send(`vfo:0,0,${revHeld[1]}`); send(`vfo:0,1,${revHeld[0]}`);
+  $("#rev").classList.add("on");
+}
+function revUp(){
+  if (!revHeld) return;
+  const [a, b] = revHeld; revHeld = null;
+  send(`vfo:0,0,${a}`); send(`vfo:0,1,${b}`);
+  $("#rev").classList.remove("on");
+}
+$("#rev").addEventListener("pointerdown", revDown);
+["pointerup", "pointercancel", "lostpointercapture"].forEach(t =>
+  $("#rev").addEventListener(t, revUp));
+// A hold that outlives the page's attention must not leave A and B swapped.
+window.addEventListener("blur", revUp);
+document.addEventListener("visibilitychange", revUp);
+
+// Typed frequency. With a point, under 100 is MHz ("7.030", "14.074") and
+// anything larger is kHz; without one, under 100 is MHz ("7"), under
+// 100000 is kHz ("7030", "14074"), and the rest is Hz. The radio's range
+// (vfo_limits) bounds it; anything outside flags the box rather than
+// sending.
+function parseFreq(t){
+  t = t.replace(/[\s,]/g, "");
+  if (!/^\d+(\.\d*)?$/.test(t)) return null;
+  const v = parseFloat(t);
+  const hz = v < 100 ? v * 1e6 : (t.includes(".") || v < 100000) ? v * 1e3 : v;
+  const r = Math.round(hz);
+  return r >= 100000 && r <= 54000000 ? r : null;
+}
+function enterFreq(){
+  const el = $("#fent"), hz = parseFreq(el.value);
+  if (hz === null || S.lock){ el.classList.add("bad"); return; }
+  el.classList.remove("bad"); el.value = ""; el.blur();
+  S.vfoA = hz; drawFreq(); holdFreq(); sendVfo();
+}
+$("#fgo").onclick = enterFreq;
+$("#fent").addEventListener("keydown", e => { if (e.key === "Enter") enterFreq(); });
+$("#fent").addEventListener("input", e => e.target.classList.remove("bad"));
+
 $("#ab").onclick = () => { if (S.lock) return; const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };
 
 // ── modes ─────────────────────────────────────────────────────────────────
@@ -757,6 +824,7 @@ $("#nb").onclick  = () => send(`rx_nb_enable:0,${!S.nb}`);
 $("#nr").onclick   = () => send("nr_tap:0");
 $("#ntch").onclick = () => send("notch_tap:0");
 $("#xfil").onclick = () => send("xfil_tap:0");
+$("#rxant").onclick = () => send(`rx_ant:0,${!S.rxAnt}`);
 // Squelch in the radio's own steps, 0-29, where 0 is open. The wire is
 // TCI's 0-100, so the slider converts both ways; the steps are 3.4 apart,
 // so the round trip lands back on the same one.
@@ -788,6 +856,7 @@ function paintRx(){
   $("#att").classList.toggle("on", S.att);
   $("#nb").classList.toggle("on", S.nb);
   $("#nr").classList.toggle("on", S.nr);
+  $("#rxant").classList.toggle("on", S.rxAnt);
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // Not a switch with an off, so never lit: it names the crystal in use.

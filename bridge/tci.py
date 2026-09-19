@@ -175,6 +175,7 @@ class RadioState:
         self.sql_on = False         # SQ000 is open: there is no on/off
         self.lock = False           # VFO A lock
         self.xfil = 0               # crystal filter FL1-FL5; 0 = not read yet
+        self.rx_ant = False         # AR: the separate receive antenna
         self.notch = "off"          # off / auto / manual, likewise
 
 
@@ -243,6 +244,7 @@ class Bridge:
         self.refresh_display()
         self.refresh_xfil()
         self.refresh_sql_lock()
+        self.refresh_rx_ant()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -392,6 +394,7 @@ class Bridge:
             *self.display_notifications(),
             self.xfil_notification(),
             *self.sql_lock_notifications(),
+            f"rx_ant:0,{bool_str(s.rx_ant)}",
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1544,6 +1547,48 @@ class Bridge:
         return [], [self.xfil_notification(),
                     *self.filter_notifications()]
 
+    # -- A>B and RX ANT ----------------------------------------------------
+    # A>B is the radio's own switch (SWT13) rather than an FB write, so it
+    # copies whatever the radio's A>B copies. Measured: FB takes FA.
+    #
+    # RX ANT has a real GET/SET, AR0/AR1. The preamp and attenuator are
+    # stored per RX ANT state (programmer's reference, PA and RA notes), so
+    # both are re-read and re-broadcast when it changes.
+    #
+    # REV is not here: a SWT12 tap changed nothing CAT can see (FA, FB, IF
+    # all unmoved, measured), so its state would be invisible. The web UI's
+    # REV is a hold-to-listen swap of A and B through `vfo` instead.
+
+    def _cmd_ab_copy(self, args):
+        if self.state.transmitting:
+            return [], []
+        self.cat.send("SWT13")
+        time.sleep(0.3)
+        self.refresh_vfo()
+        s = self.state
+        return [], [f"vfo:0,0,{s.vfo_a}", f"vfo:0,1,{s.vfo_b}"]
+
+    def refresh_rx_ant(self) -> None:
+        r = self.cat.ask("AR")
+        if r and r.startswith("AR") and len(r) >= 3 and r[2] in "01":
+            self.state.rx_ant = r[2] == "1"
+
+    def _cmd_rx_ant(self, args):
+        if len(args) >= 2 and args[1].lower() in ("true", "false"):
+            cmd = "AR1" if args[1].lower() == "true" else "AR0"
+            if self.cat.set_verified(cmd, "AR", cmd + ";"):
+                self.state.rx_ant = cmd == "AR1"
+            else:
+                self.refresh_rx_ant()
+            # Only PA and RA follow the RX ANT state; NB and NL do not, and
+            # every read here is time the button waits (1.4-1.9 s measured
+            # with all four).
+            for q in ("PA", "RA"):
+                self._parse_frontend(self.cat.ask(q))
+            return [], [f"rx_ant:0,{bool_str(self.state.rx_ant)}",
+                        *self.rx_frontend_notifications()]
+        return [f"rx_ant:0,{bool_str(self.state.rx_ant)}"], []
+
     def _cmd_nr_tap(self, args):
         return self._tap(34)
 
@@ -1858,6 +1903,9 @@ class Bridge:
                 s.vfo_b = int(msg[2:13]); out.append(f"vfo:0,1,{s.vfo_b}")
             except ValueError:
                 pass
+        elif msg.startswith("AR") and len(msg) >= 3 and msg[2] in "01":
+            s.rx_ant = msg[2] == "1"
+            out.append(f"rx_ant:0,{bool_str(s.rx_ant)}")
         elif msg[:2] in ("SQ", "LK") and self._parse_sql_lock(msg):
             # Not known to be reported by AI2; handled in case they are.
             out += self.sql_lock_notifications()

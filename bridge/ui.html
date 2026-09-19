@@ -76,9 +76,14 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
 #wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
 #vforow{display:grid; grid-template-columns:1fr 1fr 2fr 1fr; gap:6px; margin-top:6px}
-#fent{background:var(--panel2); color:var(--ink); border:1px solid var(--line);
-  border-radius:8px; padding:0 10px; font-family:var(--mono); font-size:15px; min-width:0}
-#fent.bad{border-color:var(--off)}
+/* One box holding a label and the entry, so it reads as a single field. */
+#fwrap{display:flex; align-items:center; gap:6px; min-width:0; cursor:text;
+  background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0 8px}
+#fwrap:focus-within{border-color:var(--accent)}
+#fwrap.bad{border-color:var(--off)}
+#fwrap .lbl{white-space:nowrap; font-size:10px}
+#fent{flex:1; min-width:0; background:none; border:0; outline:0; padding:0;
+  color:var(--ink); font-family:var(--mono); font-size:15px}
 /* Held, not tapped: no long-press menu or text selection under the finger. */
 #rev{touch-action:none; -webkit-touch-callout:none}
 #bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
@@ -167,7 +172,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div id="vforow">
     <button id="abcopy" title="Copy VFO A to VFO B, as A&gt;B does on the radio">A&gt;B</button>
     <button id="rev" title="Hold to listen on VFO B">REV</button>
-    <input id="fent" inputmode="decimal" autocomplete="off" placeholder="7.030 / 7030">
+    <label id="fwrap"><span class="lbl">Freq Entry</span>
+      <input id="fent" inputmode="decimal" autocomplete="off" placeholder="7.030"></label>
     <button id="fgo">Go</button>
   </div>
   <div id="wheel"><div id="ticks"></div><div class="mark"></div></div>
@@ -785,13 +791,13 @@ function parseFreq(t){
 }
 function enterFreq(){
   const el = $("#fent"), hz = parseFreq(el.value);
-  if (hz === null || S.lock){ el.classList.add("bad"); return; }
-  el.classList.remove("bad"); el.value = ""; el.blur();
+  if (hz === null || S.lock){ $("#fwrap").classList.add("bad"); return; }
+  $("#fwrap").classList.remove("bad"); el.value = ""; el.blur();
   S.vfoA = hz; drawFreq(); holdFreq(); sendVfo();
 }
 $("#fgo").onclick = enterFreq;
 $("#fent").addEventListener("keydown", e => { if (e.key === "Enter") enterFreq(); });
-$("#fent").addEventListener("input", e => e.target.classList.remove("bad"));
+$("#fent").addEventListener("input", () => $("#fwrap").classList.remove("bad"));
 
 $("#ab").onclick = () => { if (S.lock) return; const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };
 

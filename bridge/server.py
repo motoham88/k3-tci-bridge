@@ -481,7 +481,7 @@ class Server:
             if after != before:
                 await self.broadcast(self.bridge.if_notifications()
                                      + self.bridge.display_notifications()
-                                     + [f"xfil:0,{self.bridge.state.xfil}"])
+                                     + [self.bridge.xfil_notification()])
 
     async def run(self) -> None:
         self.loop = asyncio.get_running_loop()

@@ -169,6 +169,11 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div class="lbl" style="margin:10px 0 6px">Filter <span id="bwnow" class="sub"></span></div>
   <div class="steps" id="filters"></div>
   <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Width</span>
+    <input type="range" id="bw" min="50" max="2800" step="50" value="400">
+    <span class="sub" id="bwv" style="min-width:3.5em;text-align:right">—</span>
+  </div>
+  <div class="row" style="margin-top:8px">
     <button id="split">SPLIT</button>
     <button id="agc" title="AGC fast/slow">AGC</button>
     <button id="lock" title="VFO A lock">LOCK</button>
@@ -400,7 +405,7 @@ function onText(msg){
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
-    case "xfil":        S.xfil = +args[1] || 0; paintRx(); break;
+    case "xfil":        S.xfil = +args[1] || 0; S.xfilHz = +args[2] || 0; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
     case "sql_enable":  S.sqlOn = args[1] === "true"; paintSql(); break;
@@ -779,7 +784,13 @@ function paintRx(){
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // Not a switch with an off, so never lit: it names the crystal in use.
-  $("#xfil").textContent = S.xfil ? `FL${S.xfil}` : "XFIL";
+  // The crystal's width, which is what matters, over its slot number.
+  const xf = $("#xfil");
+  if (!S.xfil) xf.textContent = "XFIL";
+  else {
+    const w = S.xfilHz ? (S.xfilHz >= 1000 ? (S.xfilHz/1000) + "k" : S.xfilHz) : "XFIL";
+    xf.innerHTML = `${w}<br><span class="sub">FL${S.xfil}</span>`;
+  }
   // NB1 with both blanker levels at 00 blanks nothing.
   $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]
     ? "NB is on but both blanker levels are 0, so it does nothing. Hold NB"
@@ -804,7 +815,9 @@ function paintRit(){
 // to the carrier is mode-dependent: SSB is offset, CW/AM/FM straddle it.
 const FILTERS = {
   ssb:[[300,2700,"2.7k"],[300,2400,"2.4k"],[300,1800,"1.8k"],[400,1200,"800"],[300,3600,"3.6k"]],
-  cw: [[-700,700,"1.4k"],[-350,350,"700"],[-200,200,"400"],[-125,125,"250"],[-50,50,"100"]],
+  // The station's crystals are 2.7k, 500 and 250 (tci.XFIL_WIDTHS); the
+  // presets land on them, plus 400 and 100 for the DSP alone.
+  cw: [[-1350,1350,"2.7k"],[-250,250,"500"],[-200,200,"400"],[-125,125,"250"],[-50,50,"100"]],
   am: [[-3000,3000,"6.0k"],[-2400,2400,"4.8k"],[-1500,1500,"3.0k"],[-1000,1000,"2.0k"],[-4000,4000,"8.0k"]],
 };
 function filterSet(){
@@ -826,7 +839,36 @@ function paintFilters(){
   }
   const w = S.fhi - S.flo;
   $("#bwnow").textContent = w > 0 ? `${(w/1000).toFixed(w < 1000 ? 2 : 1)} kHz` : "";
+  paintWidth();
 }
+
+// ── width slider: the WIDTH knob ──────────────────────────────────────────
+// Sets the DSP bandwidth (BW) and leaves the passband centre where it is,
+// as the knob does; SHIFT is a separate control. The crystal is the
+// radio's business -- it re-picks one to suit, which is why the XFIL
+// button can change under a width change. Sends on release, like SQL.
+const BW_MAX = { cw:2800, ssb:4000, am:5000 };
+let bwDragging = false;
+function widthRange(){
+  return filterSet() === FILTERS.cw ? BW_MAX.cw
+       : filterSet() === FILTERS.am ? BW_MAX.am : BW_MAX.ssb;
+}
+function fmtHz(w){ return w >= 1000 ? (w/1000).toFixed(2).replace(/0$/, "") + "k" : String(w); }
+function paintWidth(){
+  const el = $("#bw"); el.max = widthRange();
+  if (bwDragging) return;                       // not under the finger
+  const w = S.fhi - S.flo;
+  if (w > 0){ el.value = w; $("#bwv").textContent = fmtHz(w); }
+}
+$("#bw").oninput = e => { bwDragging = true; $("#bwv").textContent = fmtHz(+e.target.value); };
+$("#bw").onchange = e => {
+  bwDragging = false;
+  const w = +e.target.value;
+  const sym = filterSet() !== FILTERS.ssb;      // CW, AM, FM: about the carrier
+  const c = sym ? 0 : (S.flo + S.fhi) / 2;
+  const lo = Math.round(c - w / 2);
+  send(`rx_filter_band:0,${lo},${lo + w}`);
+};
 
 // ── S-meter ───────────────────────────────────────────────────────────────
 // dBm → bar. S9 = -73 dBm, 6 dB per S-unit below it, so S1 = -121.

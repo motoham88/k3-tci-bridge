@@ -388,7 +388,7 @@ class Bridge:
             f"agc_mode:0,{s.agc}",
             *self.rx_frontend_notifications(),
             *self.display_notifications(),
-            f"xfil:0,{s.xfil}",
+            self.xfil_notification(),
             *self.sql_lock_notifications(),
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
@@ -1487,6 +1487,15 @@ class Bridge:
     # AI2 is not known to report XF, so a press at the radio arrives through
     # the server's reconcile sweep.
 
+    # What is fitted in each slot at this station, in Hz, from the operator.
+    # The radio cannot report it over CAT, so a filter swap means an edit
+    # here. Slots not listed are empty (the tap skips them anyway).
+    XFIL_WIDTHS = {3: 2700, 4: 500, 5: 250}
+
+    def xfil_notification(self) -> str:
+        n = self.state.xfil
+        return f"xfil:0,{n},{self.XFIL_WIDTHS.get(n, 0)}"
+
     def refresh_xfil(self) -> None:
         r = self.cat.ask("XF")
         if r and r.startswith("XF") and len(r) >= 3 and r[2] in "12345":
@@ -1500,7 +1509,7 @@ class Bridge:
         self.refresh_xfil()
         self.refresh_filter()
         s = self.state
-        return [], [f"xfil:0,{s.xfil}",
+        return [], [self.xfil_notification(),
                     f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
 
     def _cmd_nr_tap(self, args):

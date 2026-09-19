@@ -215,6 +215,11 @@ That curve is now `read_smeter()` in `bridge/tci.py`, with the spec in
 `k3-tci-command-map.md`. As coded, it is within ±2 dB of every retest
 point except the excluded slow -55.
 
+**Checked live after deploying.** With the bridge restarted on the new
+code, the P3 at -73 dBm showed -72 (S9+1) in the UI, and at -40 dBm it
+showed -39 (S9+34). Both are within 1 dB, which puts the end-to-end path
+inside the fit's own error.
+
 **Limits.** Measured at 14.1 MHz only, with preamp and attenuator off and
 RF GAIN at max. Below about SMH 4 the meter reads the receiver's own noise.
 Above SMH 96 (-20 dBm) the upper line is extrapolated, and the overload

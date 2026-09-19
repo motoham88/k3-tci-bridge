@@ -1287,24 +1287,35 @@ class Bridge:
 
         SMH is preferred: ~1 dB resolution against SM's 5-6 dB.
 
-        WARNING: these curves are UNCALIBRATED. They are anchored on the
-        reference's documented points (S9 = SM 9 / SMH 40, S9+60 = SM 21 /
-        SMH 100), but two attempts to verify them against the radio's 10 dB
-        attenuator gave irreconcilable results -- the WWV signal used as a
-        source faded more than the step being measured. Calibrating this
-        properly needs a signal generator. Until then, treat the output as
-        relative rather than absolute; it tracks changes, but the stated dBm
-        may be off by a good margin.
+        SMH is CALIBRATED against a signal generator, with an Elecraft P3 as
+        the level reference (tools/smcal2-retest-{slow,fast}.csv, 2026-09-19).
+        Two straight segments meeting at SMH 55, fitted to both AGC settings
+        together: 0.81 dB rms, 2.05 dB worst, from -115 to -20 dBm. The
+        reference's anchors were well off on this radio. S9 (-73 dBm) reads
+        SMH 37, not 40, and the slope changes at 55, not 40. The old
+        conversion read 3-8 dB low across the whole working range.
+
+        What the calibration covers: 14.1 MHz, CW, preamp off, attenuator
+        off, RF GAIN at max. Other bands were not measured. The meter reads
+        the AGC line, so reduced RF GAIN pins it (see the command map), and
+        the preamp or attenuator moves it by an amount not measured here.
+        Below about SMH 4 the meter is reading the receiver's own noise.
+        Above SMH 96 (-20 dBm) the upper line is extrapolated, and the
+        radio's overload relay pulls in at -10 dBm.
+
+        The SM fallback is still the reference's uncalibrated curve. The
+        same runs fit it poorly with two lines (2-3 dB rms), and it is only
+        used when SMH fails.
         """
         r = self.cat.ask("SMH")
         if r and r.startswith("SMH") and len(r) >= 7:
             n = self._meter_count(r, r[3:6], self.SMH_MAX)
             if n is None:
                 return None
-            # anchors: S1=5, S9=40, S9+60=100
-            if n <= 40:
-                return int(round(-121 + (n - 5) * (48 / 35)))
-            return int(round(-73 + (n - 40)))
+            # measured: 1.222 dB/count up to SMH 55 (-51.5 dBm), 0.78 above
+            if n <= 55:
+                return int(round(-118.71 + 1.222 * n))
+            return int(round(-51.5 + 0.78 * (n - 55)))
         r = self.cat.ask("SM")
         if r and r.startswith("SM") and len(r) >= 7:
             n = self._meter_count(r, r[2:6], self.SM_MAX)

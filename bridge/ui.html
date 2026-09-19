@@ -638,8 +638,8 @@ function paintFilters(){
 
 // ── S-meter ───────────────────────────────────────────────────────────────
 // dBm → bar. S9 = -73 dBm, 6 dB per S-unit below it, so S1 = -121.
-// The bridge's dBm figure is UNCALIBRATED (see the command map), so treat
-// this as relative movement, not an absolute reading.
+// The bridge's dBm figure is calibrated from SMH against a generator (see
+// the command map): about 1 dB at 14 MHz, preamp and attenuator off.
 // The bridge stops polling the S-meter during transmit -- SM reads 0000
 // there and the reference warns against polling a transmitting radio -- so
 // the last reading before the carrier went up is simply the last message

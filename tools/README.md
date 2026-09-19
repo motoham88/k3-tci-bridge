@@ -25,7 +25,7 @@ not set, so nothing here radiates.
 | `rxlevel.py` | Which control sets the USB RX level — `AG` or `LIN OUT`? (`AG` does nothing.) |
 | `calibrate.py` | `LIN OUT` sweep against a real signal, picking a level with headroom. |
 | `smcal.py` | S-meter *slope* from the 10 dB attenuator. **Failed against WWV** — see below. |
-| `smcal2.py` | S-meter *absolute* calibration against a signal generator. Sweeps known levels, fits the curve, writes the raw pairs. |
+| `smcal2.py` | S-meter *absolute* calibration against a signal generator, with the P3 as the level reference. Sweeps known levels, fits the curve, writes the raw pairs. **Produced the `SMH` curve in `bridge/tci.py`.** |
 | `txdiag.py` | Why will the radio not key? Checks `TX INH`, `IC` status bits, and every keying path. |
 | `swrdiag.py` | Distinguishes a stale `SW` reading from a real mismatch, and ATU-inline from bypassed. |
 | `txtest_off.py` | Reports and toggles TX TEST, and prints the pre-transmit state. |
@@ -124,7 +124,8 @@ stronger level for a while after it goes away. Raising the generator to find
 each level could leave the meter still holding a stronger level when the
 1.5 s settle ended. That is a hypothesis, and it is testable. It fits the
 points that went wrong at the bottom, where the generator needed the most
-coaxing.
+coaxing. **The retest confirmed it** (below). With a 5 s settle, slow AGC
+put -100 dBm at SMH 16, not 30.
 
 **There is a 14.5-count jump between -40 and -35 dBm**, for a nominal 5 dB
 of input, and above it the points sit about 11 counts above the line. The
@@ -136,6 +137,14 @@ at each step would have caught it. So either that step was not matched on
 the P3, or the P3 reading was taken before the level settled. The retest
 records the P3 value in the file, which will show which.
 
+**The retest showed this was wrong. It was not the generator.** Both
+retest runs read -40 dBm at SMH 70, and neither has a jump. The old -40
+point (64.5, a half count) was the one reading low: the meter was still
+moving when the 1.5 s settle ended. The old -35 and upward agree with the
+retest within about 2 counts. Their sitting "11 counts above the line" is
+real meter behaviour: the slope changes at SMH 55, and the partial run's
+line does not extend past it.
+
 **The top two or three steps are contaminated.** The operator recalls the
 K3's overload protection relay pulling in at the highest levels, around the
 last two or three steps (-25, -20, -15 dBm). Once it pulls in, the receiver
@@ -143,36 +152,74 @@ no longer sees the generator's full level. That explains -15 dBm reading
 *lower* than -20 (86.5 against 94). Those points measure the protection,
 not the meter, so leave them out of any fit, whatever the P3 read.
 
+**The operator has since confirmed the relay trips at -10 dBm**, and resets
+a few seconds after the signal goes away. So it did not trip at -15 in this
+sweep, and -15 reading lower than -20 is unexplained. The retest read -20
+at SMH 96, against 94 here, so -20 stands. -15 was not re-measured.
+
 The half-count readings (64.5 at -40, 89.5 at -25, 86.5 at -15) mean the
 12 reads straddled two values. The meter was still moving at the same
 points that misbehave. At -40 that fits a settle that was too short. At -25
 and -15 it fits the relay pulling in during the reads.
 
-**Consequence: `bridge/tci.py` and the S-meter spec in
-`k3-tci-command-map.md` stay unchanged.** `smcal2.py` now prompts for the P3
-reading at every point, records it as `p3_dbm`, and **fits at the P3 level**
-wherever one was recorded. The P3 is the reference and the CE-4000, uncalibrated
-and ageing, is not. A point more than 1.5 dB from the generator level is flagged
-on the bench and listed by `--fit`, but it stays in the fit. Operator practice:
-set the CE-4000 until the P3 reads the requested level, press Enter at the
-level prompt, then type what the P3 shows. The next step re-measures the
-suspect levels under both AGC settings, with a long settle so the hold has
-time to decay:
+At the time, `bridge/tci.py` and the command map were left unchanged
+pending a retest. That retest is below, and it replaced them both.
+
+### The retest, and the calibration now in `bridge/tci.py`
+
+`smcal2.py` now prompts for the P3 reading at every point, records it as
+`p3_dbm`, and **fits at the P3 level** wherever one was recorded. The P3 is
+the reference; the CE-4000, uncalibrated and ageing, is not. A point more
+than 1.5 dB from the generator level is flagged on the bench and listed by
+`--fit`, but it stays in the fit. Operator practice: set the CE-4000 until
+the P3 reads the requested level, press Enter at the level prompt, then
+type what the P3 shows.
+
+Two full sweeps on 2026-09-19, 14.1 MHz, CW, preamp and attenuator off,
+RF GAIN at max, 5 s settle:
 
 ```
-python3 smcal2.py --agc GT004 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-slow.csv
-python3 smcal2.py --agc GT002 --settle 5 --levels -100,-95,-90,-40,-35,-20,-15 --out smcal2-retest-fast.csv
+python3 smcal2.py --agc GT004 --settle 5 --out smcal2-retest-slow.csv
+python3 smcal2.py --agc GT002 --settle 5 --out smcal2-retest-fast.csv
 ```
 
-Listen for the protection relay at -20 and -15 dBm, and note which levels
-trip it. The script cannot see it, and a tripped point gets left out of the
-fit. If it trips, the usable top of the calibration is the highest level
-below that.
+- `smcal2-retest-slow.csv`: -125 to -25 dBm. Its -105 row has `p3_dbm`
+  mistyped as -115. `smcal2-retest-slow-105.csv` is that one level
+  re-measured (same SMH 11, P3 -105). Merge them before fitting.
+- `smcal2-retest-fast.csv`: -125 to -20 dBm.
 
-If the bottom points come down to about SMH 15-23 with the longer settle,
-the sweep's outliers were AGC hold and the rest of it stands. If they
-repeat under both AGC settings with the P3 agreeing, the meter really does
-that. Either way the result is a finding.
+All files are committed verbatim.
+
+**AGC does not matter once the meter settles.** Slow and fast agree within
+about 2 counts at every level, with one exception: slow -55 read 56.5,
+identical to its -50 point. Fast read 53 at -55, where the old sweep read
+52. So the slow -55 is a bad point (most likely read before the level
+settled) and is left out.
+
+**The curve has two straight segments, with the bend at SMH 55.** A
+continuous two-segment fit to both runs (38 points, noise floor and slow
+-55 excluded), with the bend placed by the fit:
+
+```
+n <= 55:   dBm = -118.71 + 1.222 * n          # 1.222 dB per count
+n >  55:   dBm = -51.5 + 0.78 * (n - 55)      # 0.78 dB per count
+```
+
+It fits to 0.81 dB rms, 2.05 dB worst, from -115 to -20 dBm. Forcing the
+bend to the documented SMH 40 gives 1.28 dB rms. The lower segment matches
+the partial run of 2026-09-15 (`-118.64 + 1.2338*n`) from a different
+night. **S9 (-73 dBm) reads SMH 37**, not 40. The documented anchors read
+3-8 dB low everywhere below -35 dBm.
+
+That curve is now `read_smeter()` in `bridge/tci.py`, with the spec in
+`k3-tci-command-map.md`. As coded, it is within ±2 dB of every retest
+point except the excluded slow -55.
+
+**Limits.** Measured at 14.1 MHz only, with preamp and attenuator off and
+RF GAIN at max. Below about SMH 4 the meter reads the receiver's own noise.
+Above SMH 96 (-20 dBm) the upper line is extrapolated, and the overload
+relay pulls in at -10 dBm. The `SM` fallback was not recalibrated. It fits
+poorly with two lines (2-3 dB rms), and it keeps the reference curve.
 
 ## The pattern worth copying
 

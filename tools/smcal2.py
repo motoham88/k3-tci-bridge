@@ -120,11 +120,12 @@ def dbm_to_uv(dbm, emf=False):
 # --- The conversions as they stand today, so every point prints predicted
 # --- vs actual while the bench is still set up. A units mistake (a
 # --- generator reading dBuV entered as dBm is ~107 dB out) then shows on
-# --- the first point rather than in the fit hours later.
+# --- the first point rather than in the fit hours later. Kept in step with
+# --- bridge/tci.py read_smeter(). SMH is the curve measured 2026-09-19.
 def smh_to_dbm(n):
-    if n <= 40:
-        return -121 + (n - 5) * (48 / 35)
-    return -73 + (n - 40)
+    if n <= 55:
+        return -118.71 + 1.222 * n
+    return -51.5 + 0.78 * (n - 55)
 
 
 def sm_to_dbm(n):

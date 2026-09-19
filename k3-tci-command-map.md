@@ -362,13 +362,29 @@ mean 110 W, which is not what an operator expects.
 
 **S-meter — use `SMH` (K3-only, high resolution), fall back to `SM`.**
 
-`SMH` returns `SMHnnn;` with documented anchors S1 = 5, S9 = 40,
-S9+60 = 100, max ≈ 140. Piecewise linear:
+`SMH` returns `SMHnnn;`, 0-140. The reference documents anchors S1 = 5,
+S9 = 40, S9+60 = 100, and calls them *"approximate values"*. **On this radio
+they are off**, so `bridge/tci.py` uses a measured curve instead:
 
 ```
-n <= 40:   dBm = -121 + (n - 5) * (48/35)     # 1.371 dB per count
-n >  40:   dBm = -73  + (n - 40)              # 1.0 dB per count
+n <= 55:   dBm = -118.71 + 1.222 * n          # 1.222 dB per count
+n >  55:   dBm = -51.5 + 0.78 * (n - 55)      # 0.78 dB per count
 ```
+
+Measured on 2026-09-19 against a Cushman CE-4000 generator, with an
+Elecraft P3 as the level reference at every point. Two full sweeps were
+run, one with slow AGC and one with fast, both with a 5 s settle, and they
+agree within about 2 counts. The two-line fit to both runs is 0.81 dB rms
+and 2.05 dB worst from -115 to -20 dBm. S9 (-73 dBm) reads **SMH 37**, and
+the slope changes at **SMH 55** (-51.5 dBm), not at 40. The documented
+anchors read 3-8 dB low everywhere below -35 dBm. Data and method are in
+`tools/README.md`.
+
+Valid for 14.1 MHz, CW, preamp off, attenuator off, RF GAIN at max. Other
+bands, the preamp and the attenuator were not measured. Below about SMH 4
+the meter reads the receiver's own noise. Above SMH 96 (-20 dBm) the
+upper line is extrapolated, and the radio's overload relay pulls in at
+-10 dBm.
 
 `SM` under `K31` returns `SMnnnn;`, 0000-0021, anchors S9 = 9, S9+20 = 13,
 S9+40 = 17, S9+60 = 21:
@@ -378,14 +394,11 @@ n <= 9:    dBm = -73 - 6 * (9 - n)            # 6 dB per S-unit
 n >  9:    dBm = -73 + 5 * (n - 9)            # 5 dB per count above S9
 ```
 
-The reference calls the `SMH` figures *"approximate values"* — label the
-resulting `rx_smeter` dBm as approximate in any user-facing note.
-
-Both formulas are anchored fits, not documented curves, and the `SM`
-fallback is worse: the reference gives **no anchor below S9**, so the
-6 dB/S-unit term there is extrapolation (it puts `SM0000` at −127 dBm).
-Since `SMH` is primary this rarely bites, but don't treat the low end of
-the `SM` scale as calibrated.
+The `SM` formula is still the reference's anchors, uncalibrated. The same
+sweeps fit it poorly with two lines (2-3 dB rms), so it was left alone. The
+reference gives **no anchor below S9**, so the 6 dB/S-unit term there is
+extrapolation (it puts `SM0000` at −127 dBm). Since `SMH` is primary this
+rarely bites, but don't treat the `SM` fallback as calibrated.
 
 **`SM` returns 0000 in transmit mode.** Suppress the S-meter poll while
 `TQ1`, which also honors the reference's *"Polling during transmit not be
@@ -401,7 +414,7 @@ assert it rather than assume it.
 
 | TCI | K3S GET | Conversion | Notes |
 |---|---|---|---|
-| `rx_smeter:0,<dbm>` | `SMH;` (fallback `SM;`) | piecewise above | 200 ms poll, RX only |
+| `rx_smeter:0,<dbm>` | `SMH;` (fallback `SM;`) | measured curve above (`SM`: piecewise) | 200 ms poll, RX only |
 | `tx_sensors:0,...` | `TQ;` `BG;` `SW;` | see below | ≤ 5 Hz poll, TX only |
 
 **`tx_sensors` is partial on a K3S and will stay that way.** TCI wants
@@ -943,9 +956,10 @@ point. A median over a dozen reads absorbs it and the range-check in
 single sample will occasionally return the last measurement instead of the
 current one.
 
-7. **The S-meter → dBm conversion is uncalibrated, and needs a signal
-   generator.** Both formulas are anchored on the reference's documented
-   points, and neither has been verified.
+7. **The S-meter → dBm conversion needed a signal generator. `SMH` now has
+   one; `SM` does not.** Both formulas were first anchored on the
+   reference's documented points, and neither could be verified without a
+   known source.
 
    Two attempts to verify them against the one precisely known step this
    radio can produce — the 10 dB attenuator, `RA00` vs `RA01` — gave
@@ -962,6 +976,7 @@ current one.
    the reference's own anchors (5 dB/count above S9), so it is the
    measurement that is wrong, not the documentation.
 
-   **Do not calibrate against a fading sky-wave signal.** This needs a
-   signal generator, or at minimum a stable local carrier at a known level.
-   Until then `rx_smeter` should be read as relative, not absolute.
+   **Do not calibrate against a fading sky-wave signal.** It took a signal
+   generator. The `SMH` curve in *Metering* above is the result, measured
+   on 2026-09-19 with the P3 as the level reference. It showed the
+   documented anchors reading 3-8 dB low. `SM` is still uncalibrated.

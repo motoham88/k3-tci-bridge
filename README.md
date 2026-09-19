@@ -114,11 +114,14 @@ nothing, with no error at either end.
 injected 85 ms of latency while CPU stayed near zero — the risk in the audio
 path was never CPU.
 
-**The S-meter → dBm conversion is uncalibrated.** Two attempts to verify it
-against the radio's 10 dB attenuator gave irreconcilable answers, because
-the WWV signal used as a reference faded more than the step being measured.
-Treat `rx_smeter` as relative. Calibrating it properly needs a signal
-generator.
+**The S-meter → dBm conversion needed a signal generator.** Two attempts
+to verify it against the radio's 10 dB attenuator gave irreconcilable
+answers, because the WWV signal used as a reference faded more than the
+step being measured. A generator sweep, with an Elecraft P3 as the level
+reference, then showed the documented anchors reading 3-8 dB low. S9 sits
+at SMH 37, not 40, and the slope bends at SMH 55. `rx_smeter` now uses the
+measured curve: 0.81 dB rms from -115 to -20 dBm, at 14 MHz with preamp
+and attenuator off (`tools/README.md`).
 
 ---
 

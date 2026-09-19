@@ -805,6 +805,8 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
   (see rule 7), checked on the radio: NR tapped twice read on, then off;
   NTCH in CW read **manual**, then off -- CW has no auto notch, so the
   switch goes straight to the manual one.
+- **Width and SHIFT sliders** (`rx_filter_band`, `if_shift`) confirmed in
+  use by the operator; the crystal follows the width as measured above.
 - **`BN00`-`BN10`** each land inside the band `tci.BANDS` gives them, and an
   off-band `FA` sticks as that band's memory (`bandtest.py`; see the note
   under *Frequency and VFO*).

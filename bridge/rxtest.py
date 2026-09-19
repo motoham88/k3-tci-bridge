@@ -7,8 +7,9 @@ cannot: that each GET answers in the exact format the bridge parses --
 `GT004;`, `PA1;`, `RA01;`, `NB1;` -- rather than something longer that
 reads as "no change".
 
-NR and NTCH are not here: their state cannot be read back (see
-tci.Bridge._tap), so there is nothing to check but your ears.
+NR and NTCH are not here: each is a switch press that cycles rather than
+sets (NTCH goes off -> manual in CW), so there is no "flip and flip back".
+Their read-back is covered offline in tbframetest.py.
 
 Receive only. Everything is put back as it was found.
 """

@@ -1636,16 +1636,21 @@ class Bridge:
         dbm = self._read_meter_dbm()
         if dbm is None:
             return None
-        # THE ATTENUATOR IS IN FRONT OF THE METER, so with it on the radio
-        # reads the signal 10 dB low. Put it back, so the reading stays a
-        # level at the antenna whatever the pad is doing. 10 dB is the
-        # reference's nominal figure: the attempts to measure the step on
-        # WWV were swamped by fading (command map, item 7), and no generator
-        # run has covered it. The preamp is NOT corrected -- its gain was
-        # never measured, so the page flags the reading instead.
-        return dbm + (self.ATT_DB if self.state.att else 0)
+        # THE PREAMP AND ATTENUATOR ARE IN FRONT OF THE METER, so with the
+        # pad in the radio reads a signal 10 dB low, and with the preamp on
+        # it reads high. Both are taken back out, so the reading stays a
+        # level at the antenna whatever the front end is doing.
+        #
+        # Both are 10 dB by assumption, not measurement. The pad is the
+        # reference's nominal figure; the attempts to measure it on WWV were
+        # swamped by fading (command map, item 7). The preamp is taken as
+        # 10 dB on the operator's decision -- no generator run covers it.
+        s = self.state
+        return (dbm + (self.ATT_DB if s.att else 0)
+                    - (self.PRE_DB if s.preamp else 0))
 
     ATT_DB = 10
+    PRE_DB = 10
 
     def _read_meter_dbm(self) -> int | None:
         """The calibrated conversion, at the receiver input."""

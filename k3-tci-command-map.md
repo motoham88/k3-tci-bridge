@@ -406,10 +406,11 @@ anchors read 3-8 dB low everywhere below -35 dBm. Data and method are in
 `tools/README.md`.
 
 Valid for 14.1 MHz, CW, preamp off, attenuator off, RF GAIN at max. Other
-bands, the preamp and the attenuator were not measured. The bridge adds the
-reference's nominal 10 dB back when the attenuator is on (`tci.ATT_DB`), so
-`rx_smeter` stays a level at the antenna; the preamp is not corrected and
-the web UI marks readings taken with it on (`PRE≈`). Below about SMH 4
+bands, the preamp and the attenuator were not measured. The bridge takes
+both back out so `rx_smeter` stays a level at the antenna: +10 dB with the
+attenuator on (`tci.ATT_DB`, the reference's nominal figure) and -10 dB
+with the preamp on (`tci.PRE_DB`, assumed on the operator's decision; no
+calibration run is planned). Below about SMH 4
 the meter reads the receiver's own noise. Above SMH 96 (-20 dBm) the
 upper line is extrapolated, and the radio's overload relay pulls in at
 -10 dBm.

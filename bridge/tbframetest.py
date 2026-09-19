@@ -490,15 +490,19 @@ def main():
         b = tci.Bridge(StubCat(None, asks))
         check(label, b.read_smeter(), want, fails)
 
-    # The attenuator sits in front of the meter: with it on, the same count
-    # is a signal 10 dB stronger at the antenna. Out-of-range stays None.
-    for label, asks, want in [
-        ("ATT on: S9 count reads 10 dB up", {"SMH": "SMH037;"}, -63),
-        ("ATT on: SM fallback too",         {"SM": "SM0009;"},  -63),
-        ("ATT on: over range still None",   {"SMH": "SMH141;"}, None),
+    # The preamp and the attenuator sit in front of the meter, 10 dB each
+    # by assumption. With the pad in, the same count is a signal 10 dB
+    # stronger at the antenna; with the preamp on, 10 dB weaker; with both,
+    # they cancel. Out-of-range stays None.
+    for label, asks, att, pre, want in [
+        ("ATT on: S9 count reads 10 dB up", {"SMH": "SMH037;"}, 1, 0, -63),
+        ("ATT on: SM fallback too",         {"SM": "SM0009;"},  1, 0, -63),
+        ("ATT on: over range still None",   {"SMH": "SMH141;"}, 1, 0, None),
+        ("PRE on: S9 count reads 10 dB down", {"SMH": "SMH037;"}, 0, 1, -83),
+        ("PRE and ATT cancel",              {"SMH": "SMH037;"}, 1, 1, -73),
     ]:
         b = tci.Bridge(StubCat(None, asks))
-        b.state.att = True
+        b.state.att, b.state.preamp = bool(att), bool(pre)
         check(label, b.read_smeter(), want, fails)
 
     print()

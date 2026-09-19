@@ -772,7 +772,6 @@ function paintRx(){
   $("#pre").classList.toggle("on", S.pre);
   $("#att").classList.toggle("on", S.att);
   $("#nb").classList.toggle("on", S.nb);
-  $("#sval").title = S.pre ? "Preamp on: its gain is not calibrated, so this reads high" : "";
   $("#nr").classList.toggle("on", S.nr);
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
@@ -846,12 +845,11 @@ function setMeter(dbm){
   const pct = Math.max(0, Math.min(100, (dbm + 121) / (121 - 13) * 100));
   $("#bar").style.width = pct + "%";
   const over = dbm + 73;
-  // The bridge corrects for the attenuator; the preamp's gain was never
-  // measured, so a reading with it on is flagged rather than trusted.
-  $("#sval").textContent = (over >= 0
+  // Already a level at the antenna: the bridge takes the preamp and the
+  // attenuator back out (tci.PRE_DB, tci.ATT_DB).
+  $("#sval").textContent = over >= 0
     ? `S9+${Math.round(over)}  ${dbm} dBm`
-    : `S${Math.max(0, Math.round(9 + over/6))}  ${dbm} dBm`)
-    + (S.pre ? "  PRE≈" : "");
+    : `S${Math.max(0, Math.round(9 + over/6))}  ${dbm} dBm`;
 }
 
 // ── audio ─────────────────────────────────────────────────────────────────

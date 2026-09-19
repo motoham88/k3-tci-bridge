@@ -176,6 +176,7 @@ class RadioState:
         self.lock = False           # VFO A lock
         self.xfil = 0               # crystal filter FL1-FL5; 0 = not read yet
         self.rx_ant = False         # AR: the separate receive antenna
+        self.ant = 0                # AN: 1 or 2; 0 = not read yet
         self.notch = "off"          # off / auto / manual, likewise
 
 
@@ -245,6 +246,7 @@ class Bridge:
         self.refresh_xfil()
         self.refresh_sql_lock()
         self.refresh_rx_ant()
+        self.refresh_ant()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -395,6 +397,7 @@ class Bridge:
             self.xfil_notification(),
             *self.sql_lock_notifications(),
             f"rx_ant:0,{bool_str(s.rx_ant)}",
+            f"ant:0,{s.ant}",
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1589,6 +1592,29 @@ class Bridge:
                         *self.rx_frontend_notifications()]
         return [f"rx_ant:0,{bool_str(self.state.rx_ant)}"], []
 
+    # -- ANT --------------------------------------------------------------
+    # AN1/AN2, the transmit/receive antenna (the ATU's two outputs). The
+    # radio reports AN on a band change, so on_cat_event keeps it current
+    # as the per-band selection moves. Not switched under key.
+
+    def refresh_ant(self) -> None:
+        r = self.cat.ask("AN")
+        if r and r.startswith("AN") and len(r) >= 3 and r[2] in "12":
+            self.state.ant = int(r[2])
+
+    def _cmd_ant(self, args):
+        if len(args) >= 2 and args[1] in ("1", "2"):
+            if self.state.transmitting:
+                log.warning("antenna change refused while transmitting")
+                return [], []
+            cmd = f"AN{args[1]}"
+            if self.cat.set_verified(cmd, "AN", cmd + ";"):
+                self.state.ant = int(args[1])
+            else:
+                self.refresh_ant()
+            return [], [f"ant:0,{self.state.ant}"]
+        return [f"ant:0,{self.state.ant}"], []
+
     def _cmd_nr_tap(self, args):
         return self._tap(34)
 
@@ -1903,9 +1929,20 @@ class Bridge:
                 s.vfo_b = int(msg[2:13]); out.append(f"vfo:0,1,{s.vfo_b}")
             except ValueError:
                 pass
+        # AN and AR: broadcast only a CHANGE. An antenna switch was seen to
+        # report AN more than once; the echo guard swallows one, and the
+        # next went out as news, flashing the old antenna on the button
+        # during the following switch. Serial order means a stale report
+        # can only land before the next read-back, never after it, so this
+        # loses nothing real.
+        elif msg.startswith("AN") and len(msg) >= 3 and msg[2] in "12":
+            if int(msg[2]) != s.ant:
+                s.ant = int(msg[2])
+                out.append(f"ant:0,{s.ant}")
         elif msg.startswith("AR") and len(msg) >= 3 and msg[2] in "01":
-            s.rx_ant = msg[2] == "1"
-            out.append(f"rx_ant:0,{bool_str(s.rx_ant)}")
+            if (msg[2] == "1") != s.rx_ant:
+                s.rx_ant = msg[2] == "1"
+                out.append(f"rx_ant:0,{bool_str(s.rx_ant)}")
         elif msg[:2] in ("SQ", "LK") and self._parse_sql_lock(msg):
             # Not known to be reported by AI2; handled in case they are.
             out += self.sql_lock_notifications()

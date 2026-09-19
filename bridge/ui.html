@@ -213,6 +213,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button id="ntch" title="Presses NTCH on the radio, which cycles it">NTCH</button>
     <button id="xfil" title="Presses XFIL on the radio: next crystal filter">XFIL</button>
     <button id="rxant" title="Receive on the RX ANT input">RX ANT</button>
+    <button id="ant" title="Switch between ANT1 and ANT2">ANT</button>
   </div>
   <div id="nbhint"></div>
   <div class="row" style="margin-top:8px">
@@ -333,7 +334,7 @@ const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
             pre:false, att:false, nb:false, nbLevels:[0,0], nr:false, notch:"off",
             rit:false, xit:false, ritOffset:0,
-            sqlOn:false, sqlLevel:0, lock:false, xfil:0, rxAnt:false, tx:false, audio:false,
+            sqlOn:false, sqlLevel:0, lock:false, xfil:0, rxAnt:false, ant:0, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -430,6 +431,7 @@ function onText(msg){
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
+    case "ant":         S.ant = +args[1] || 0; paintRx(); break;
     case "rx_ant":      S.rxAnt = args[1] === "true"; paintRx(); break;
     case "if_shift":    S.ifc = +args[1] || 0; paintShift(); break;
     case "xfil":        S.xfil = +args[1] || 0; S.xfilHz = +args[2] || 0; paintRx(); break;
@@ -831,6 +833,7 @@ $("#nr").onclick   = () => send("nr_tap:0");
 $("#ntch").onclick = () => send("notch_tap:0");
 $("#xfil").onclick = () => send("xfil_tap:0");
 $("#rxant").onclick = () => send(`rx_ant:0,${!S.rxAnt}`);
+$("#ant").onclick = () => { if (S.ant && !S.tx) send(`ant:0,${S.ant === 1 ? 2 : 1}`); };
 // Squelch in the radio's own steps, 0-29, where 0 is open. The wire is
 // TCI's 0-100, so the slider converts both ways; the steps are 3.4 apart,
 // so the round trip lands back on the same one.
@@ -863,6 +866,8 @@ function paintRx(){
   $("#nb").classList.toggle("on", S.nb);
   $("#nr").classList.toggle("on", S.nr);
   $("#rxant").classList.toggle("on", S.rxAnt);
+  // Names the antenna in use rather than lighting: there is no "off".
+  $("#ant").textContent = S.ant ? `ANT${S.ant}` : "ANT";
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // Not a switch with an off, so never lit: it names the crystal in use.

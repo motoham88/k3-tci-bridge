@@ -9,6 +9,16 @@ proprietary remote box.
 *The radio this bridge drives. The web UI's controls follow its front panel:
 BAND, AGC, PRE/ATT, NB, NR, NTCH, RIT/XIT.*
 
+<table>
+<tr>
+<td><img src="screenshots/web-ui-top.png" alt="Web UI, top: S-meter, frequency with tuning strip and band buttons, mode, filter and receive controls" width="320"></td>
+<td><img src="screenshots/web-ui-bottom.png" alt="Web UI, bottom: decoded text, CW keyer with macros, audio and power, TX audio meters, PTT and log" width="320"></td>
+</tr>
+</table>
+
+*The web UI on a phone, live against the radio on 20 m CW. It is served by
+the bridge itself on port 50001, so nothing needs installing.*
+
 The Pi presents a TCI WebSocket server on port 50001. Any TCI client can
 connect for CAT control and two-way audio; a browser-based UI is served from
 the same port, so a phone on the LAN needs nothing installed.

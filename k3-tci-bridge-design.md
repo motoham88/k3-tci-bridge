@@ -188,11 +188,15 @@ Real options for IQ/spectrum later, if wanted:
 
 - [x] Build full K3 CAT ↔ TCI command mapping table — done, see
       `k3-tci-command-map.md`.
-- [ ] Verify the six hardware-dependent items at the end of the command map
-      (sideband polarities first).
-- [ ] Decide PTT watchdog timeout value.
-- [ ] Prototype server, get init handshake + `vfo`/`modulation`/`trx` working
-      against TCI Remote app.
+- [x] Verify the hardware-dependent items at the end of the command map —
+      sideband polarity, mode-string case and the filter write path are
+      settled; `AG` turned out not to apply. Split was open; see the
+      command map.
+- [x] Decide PTT watchdog timeout value — 90 s (`tci.PTT_WATCHDOG_S`),
+      with an immediate unkey when the keying client disconnects.
+- [x] Prototype server, get init handshake + `vfo`/`modulation`/`trx` working
+      against TCI Remote app — running on the Pi as `k3-tci.service`, and
+      WSJT-X 3.0.1 works over it too.
 - [ ] Once core bridge is stable, revisit AetherSDR: ask upstream (GitHub
       discussions/issues) whether a TCI-client mode or generic serial-CAT
       backend is feasible, using the same gh-cli-via-Claude-Code workflow

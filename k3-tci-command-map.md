@@ -957,8 +957,9 @@ Sideband polarity for CW and DATA is **settled** — see above. Remaining:
    omitting DSB/SAM from the list does not hide those buttons (they are
    present in the UI regardless; selecting one just won't map).
 
-4. **`AG` volume taper.** The amplitude-linear dB→`AG` formula is a
-   starting point, not a documented curve.
+4. ~~**`AG` volume taper.**~~ **Does not apply.** `AG` does not affect the
+   USB audio at all (see *Receive audio and DSP*), so `volume` is software
+   gain and there is no taper to verify.
 
 5. **Split.** Clearing works; *enabling* does not — `FT1;` is sent and
    `IF` field `p` still reads 0. Unresolved, and deliberately not pursued:
@@ -966,10 +967,12 @@ Sideband polarity for CW and DATA is **settled** — see above. Remaining:
    the reference contradicts itself on cancel (command description says
    `FR0;`, sample macro uses `FT0;`).
 
-6. **`rx_filter_band` round-trip in each mode.** Set a band, read back
-   `BW;`/`IS;`, confirm the reported passband matches what the client drew —
-   particularly in CW, where we deliberately don't touch `IS`. (The CW
-   *read* path is now confirmed; it's the write path that's untested.)
+6. ~~**`rx_filter_band` round-trip in each mode.**~~ **Settled 2026-09-19**
+   by `filtertest.py`. USB, LSB, CW and DATA write and read back exactly
+   (USB 300..2700 and 300..1800, LSB -2700..-300, CW -350..350 and
+   -200..200, DATA 300..2700). CW stays symmetric about the carrier, so
+   `IS` is correctly left alone there. AM clamps a 6000 Hz request to 5000.
+   A mode change re-broadcasts the passband.
 
 **RF GAIN (`RG`) is inverted, and reducing it PINS the S-meter.**
 `RG000`-`RG250`, clamping at 250, and **`RG250` is MAXIMUM gain** — the

@@ -6,7 +6,10 @@ mode-dependent, and the failure mode is silent: in CW/AM the TCI band
 straddles the carrier, so a naive (lo+hi)/2 gives zero and would drag the
 passband to DC. This checks each class round-trips sensibly.
 
-Receive only.
+Receive only. The radio stores a filter per mode, and this rewrites them,
+so each mode's passband is recorded first and written back at the end, and
+the starting mode is restored. DATA is left on sub-mode DATA A, which is
+what `digu` selects.
 """
 import asyncio
 import sys
@@ -17,10 +20,17 @@ URL = "ws://127.0.0.1:50001"
 
 
 async def init(ws):
+    """Returns the starting mode."""
+    mode = None
     while True:
         m = await asyncio.wait_for(ws.recv(), 8.0)
-        if isinstance(m, str) and m.strip().rstrip(";") == "start":
-            return
+        if not isinstance(m, str):
+            continue
+        for t in m.split(";"):
+            if t.strip().startswith("modulation:"):
+                mode = t.strip().split(",")[1]
+        if m.strip().rstrip(";") == "start":
+            return mode
 
 
 async def collect(ws, window=1.4):
@@ -48,7 +58,7 @@ def band_of(msgs):
 async def main():
     fails = []
     async with connect(URL) as ws:
-        await init(ws)
+        start_mode = await init(ws)
         await collect(ws, 0.5)
 
         # mode, requested band, what we expect back
@@ -61,6 +71,14 @@ async def main():
             ("am",   (-3000, 3000), "symmetric, wide"),
             ("digu", (300, 2700),   "offset, positive"),
         ]
+
+        saved = {}
+        for mode in dict.fromkeys(m for m, _, _ in cases):
+            await ws.send(f"modulation:0,{mode};")
+            # DATA verifies DT and MD in turn, which can outlast the usual
+            # window; a passband missed here cannot be restored.
+            saved[mode] = band_of(await collect(ws, 3.0))
+        print(f"  saved per-mode filters: {saved}\n")
 
         for mode, (lo, hi), note in cases:
             await ws.send(f"modulation:0,{mode};")
@@ -99,8 +117,22 @@ async def main():
         if not any(m.startswith("rx_filter_band") for m in got):
             fails.append("mode change did not re-broadcast rx_filter_band")
 
-        await ws.send("modulation:0,am;")
-        await collect(ws, 0.8)
+        print("\n  restoring:")
+        for mode, band in saved.items():
+            if band is None:
+                print(f"    {mode}: nothing saved, left as tested")
+                continue
+            await ws.send(f"modulation:0,{mode};")
+            await collect(ws)
+            await ws.send(f"rx_filter_band:0,{band[0]},{band[1]};")
+            back = band_of(await collect(ws))
+            print(f"    {mode:<5} {band} -> {back}")
+            if back != band:
+                fails.append(f"{mode}: restored {back}, saved {band}")
+        if start_mode:
+            await ws.send(f"modulation:0,{start_mode};")
+            await collect(ws)
+            print(f"    mode back to {start_mode}")
 
     print()
     if fails:

@@ -22,7 +22,7 @@ Working CAT control **and bidirectional audio streaming**. See
 | `chronotest.py` | TX_CHRONO pacing (start, rate, stop) |
 | `wsjtxmon.py` | Watches WSJT-X transmissions, checks FT8 slot timing |
 | `soak.py` | Long-run audio soak (hours), gap and drift detection |
-| `filtertest.py` | `rx_filter_band` across all mode classes |
+| `filtertest.py` | `rx_filter_band` across all mode classes; restores each mode's filter afterwards |
 | `rxtest.py` | AGC, PRE, ATT, NB, RIT, XIT each flip and read back |
 | `bandtest.py` | Band buttons land in their bands; whether an off-band frequency sticks in a band memory |
 | `audiobench.py` | RX audio pipeline benchmark (used for the capability eval) |
@@ -278,10 +278,9 @@ returns `?;` with the service stopped.
 
 ## Not yet implemented
 
-Browser microphone TX (needs HTTPS/WSS), `agc_mode`, squelch, the noise
-blanker and VFO lock (each mapped byte-exact in the command map, each a
-small addition on the pattern RIT/XIT used), IQ (deliberately never — no
-panadapter).
+Browser microphone TX (needs HTTPS/WSS), squelch and VFO lock (each mapped
+byte-exact in the command map, each a small addition on the pattern the
+preamp and attenuator used), IQ (deliberately never — no panadapter).
 
 ## Six things not to "fix"
 

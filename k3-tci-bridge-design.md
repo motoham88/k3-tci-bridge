@@ -190,8 +190,8 @@ Real options for IQ/spectrum later, if wanted:
       `k3-tci-command-map.md`.
 - [x] Verify the hardware-dependent items at the end of the command map —
       sideband polarity, mode-string case and the filter write path are
-      settled; `AG` turned out not to apply. Split was open; see the
-      command map.
+      settled; `AG` turned out not to apply; split works (it was a
+      read-back bug).
 - [x] Decide PTT watchdog timeout value — 90 s (`tci.PTT_WATCHDOG_S`),
       with an immediate unkey when the keying client disconnects.
 - [x] Prototype server, get init handshake + `vfo`/`modulation`/`trx` working

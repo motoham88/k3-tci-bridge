@@ -961,11 +961,13 @@ Sideband polarity for CW and DATA is **settled** — see above. Remaining:
    USB audio at all (see *Receive audio and DSP*), so `volume` is software
    gain and there is no taper to verify.
 
-5. **Split.** Clearing works; *enabling* does not — `FT1;` is sent and
-   `IF` field `p` still reads 0. Unresolved, and deliberately not pursued:
-   nothing in use here needs split. The original question also stands, that
-   the reference contradicts itself on cancel (command description says
-   `FR0;`, sample macro uses `FT0;`).
+5. ~~**Split.**~~ **Settled 2026-09-19 — `FT1;` enables, `FR0;` clears.**
+   It was recorded as "enabling does not take" on 2026-08-13, while
+   `refresh_if` was still rejecting every 37-character `IF` reply, so the
+   split field could never have read anything but its startup value. With
+   that fixed, `split_enable:0,true` reads back split on and `false` reads
+   back off. `FR0;` is the cancel the bridge uses and it works; `FT0;` (the
+   reference's macro) was not needed.
 
 6. ~~**`rx_filter_band` round-trip in each mode.**~~ **Settled 2026-09-19**
    by `filtertest.py`. USB, LSB, CW and DATA write and read back exactly

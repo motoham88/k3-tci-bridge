@@ -264,17 +264,18 @@ second without a reading, which also covers a bridge that has gone quiet.
   and backed off to 0.67 Hz while nothing is decoding
 - Web UI tuning wheel, 1 Hz to 1 kHz per tick, with throttled sends
 
-## Known limitation: enabling split
+## Split: it was the read-back, not the radio
 
-`split_enable:0,true` does not take. The command reaches the bridge, the
-bridge sends `FT1;`, and the radio's `IF` response still reports split off.
-Cause not established — `FT1` may be returning `?;` on a path that does not
-check for it, or split may be unavailable in the mode being used.
+This section used to record that `split_enable:0,true` did not take: `FT1;`
+went out and the bridge still reported split off. The radio was never the
+problem. At the time `refresh_if` rejected every `IF` reply on its length
+(37 characters on this radio, not the reference's 38), so the split flag
+could not change in the bridge whatever the radio did. That was fixed on
+2026-08-23 for other reasons, and nobody went back to split.
 
-Reading split works correctly, and clearing it works, so WSJT-X (which only
-ever sends `split_enable:false`) is unaffected. Not pursued because nothing
-in use here needs split. If you need it, start by checking whether `FT1;`
-returns `?;` with the service stopped.
+Retested on the radio on 2026-09-19: `FT1;` enters split and `FR0;` leaves
+it, both confirmed by the `IF` read-back. The SPLIT button in the web UI
+works.
 
 ## Not yet implemented
 

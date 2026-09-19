@@ -86,6 +86,8 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
   color:var(--ink); font-family:var(--mono); font-size:15px}
 /* Held, not tapped: no long-press menu or text selection under the finger. */
 #rev{touch-action:none; -webkit-touch-callout:none}
+/* "XFIL: 2.7k" on one line even at 360 px: less side padding, no wrap. */
+#xfil{padding-left:4px; padding-right:4px; white-space:nowrap}
 #bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
 #bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
 
@@ -871,12 +873,13 @@ function paintRx(){
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
   // Not a switch with an off, so never lit: it names the crystal in use.
-  // The crystal's width, which is what matters, over its slot number.
+  // Says what the button is, then the crystal's width, which is what
+  // matters, over its slot number.
   const xf = $("#xfil");
   if (!S.xfil) xf.textContent = "XFIL";
   else {
     const w = S.xfilHz ? (S.xfilHz >= 1000 ? (S.xfilHz/1000) + "k" : S.xfilHz) : "XFIL";
-    xf.innerHTML = `${w}<br><span class="sub">FL${S.xfil}</span>`;
+    xf.innerHTML = `XFIL: ${w}<br><span class="sub">FL${S.xfil}</span>`;
   }
   // NB1 with both blanker levels at 00 blanks nothing.
   $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]

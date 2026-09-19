@@ -53,8 +53,8 @@ PORT = "/dev/k3cat"
 # these means the reply was not what we think it was, not a huge signal.
 SMH_MAX, SM_MAX = 140, 21
 
-# How far the P3 may disagree with the generator before a point is presumed
-# to be at the wrong level. The two agreed within 0.01 dB at -73 and -125.
+# How far the P3 may disagree with the generator before the point is flagged
+# on the bench. The two agreed within 0.01 dB at -73 and -125.
 P3_TOL = 1.5
 
 # State pinned for the run, saved and put back afterwards.
@@ -183,6 +183,12 @@ def meters(ser, n=12, settle=1.5):
             len(sm), len(smh))
 
 
+def level(p):
+    """The input level a point is fitted at: the P3 reading when one was
+    recorded, otherwise the generator level."""
+    return p["p3_dbm"] if p.get("p3_dbm") is not None else p["dbm"]
+
+
 def fit(points, floor_smh, floor_sm):
     """Report what the measured points actually say.
 
@@ -197,14 +203,17 @@ def fit(points, floor_smh, floor_sm):
             ("sm", floor_sm, 9, 9, "SM")):
         pts = [p for p in points if p.get(key) is not None]
 
-        # A point the P3 contradicts measured something other than its stated
-        # level. Runs without a p3_dbm column pass through untouched.
-        bad = [p for p in pts if p.get("p3_dbm") is not None
-               and abs(p["p3_dbm"] - p["dbm"]) > P3_TOL]
-        if bad:
-            print(f"\n{key.upper()}: excluding {len(bad)} point(s) the P3 "
-                  f"contradicts: " + ", ".join(f"{p['dbm']:.0f}" for p in bad))
-            pts = [p for p in pts if p not in bad]
+        # The P3 is the reference: the CE-4000 is uncalibrated and ageing, so
+        # where it and the P3 disagree the P3 is believed. Points it corrects
+        # are listed, not excluded. Runs without a p3_dbm column fall back to
+        # the generator level.
+        moved = [p for p in pts if p.get("p3_dbm") is not None
+                 and abs(p["p3_dbm"] - p["dbm"]) > P3_TOL]
+        if moved:
+            print(f"\n{key.upper()}: {len(moved)} point(s) fitted at the P3 "
+                  f"level, not the generator's: "
+                  + ", ".join(f"{p['dbm']:.0f}->{p['p3_dbm']:.1f}"
+                              for p in moved))
 
         # Drop anything sitting in the receiver's own noise. Below about two
         # counts above the measured floor the meter is reading the radio,
@@ -222,7 +231,7 @@ def fit(points, floor_smh, floor_sm):
             continue
 
         x = np.array([p[key] for p in clean], float)
-        y = np.array([p["dbm"] for p in clean], float)
+        y = np.array([level(p) for p in clean], float)
         slope, intercept = np.polyfit(x, y, 1)
         resid = y - (slope * x + intercept)
 
@@ -245,8 +254,8 @@ def fit(points, floor_smh, floor_sm):
         lo = [p for p in clean if p[key] <= brk]
         hi = [p for p in clean if p[key] > brk]
         if len(lo) >= 3 and len(hi) >= 3:
-            ls, _ = np.polyfit([p[key] for p in lo], [p["dbm"] for p in lo], 1)
-            hs, _ = np.polyfit([p[key] for p in hi], [p["dbm"] for p in hi], 1)
+            ls, _ = np.polyfit([p[key] for p in lo], [level(p) for p in lo], 1)
+            hs, _ = np.polyfit([p[key] for p in hi], [level(p) for p in hi], 1)
             print(f"  below n={brk}: {ls:.3f} dB/count    "
                   f"above n={brk}: {hs:.3f} dB/count")
             print(f"  -> slopes {'agree; the break may not be real' if abs(ls - hs) < 0.15 else 'differ; the break is doing work'}")
@@ -422,8 +431,9 @@ def sweep(ser, args):
                 print("    not a number; try again")
         if p3 is not None and abs(p3 - actual) > P3_TOL:
             print(f"    P3 DISAGREES by {p3 - actual:+.1f} dB -- the generator "
-                  f"is not at {actual:.1f} dBm.\n    Kept in the file, "
-                  f"excluded from the fit.")
+                  f"is not at {actual:.1f} dBm.\n    Fitted at the P3's "
+                  f"{p3:.1f} dBm. Re-set the generator and redo it if a\n"
+                  f"    level near {actual:.1f} matters.")
 
         points.append({"requested": level, "dbm": actual,
                        "entered": entered, "units": args.units,

@@ -150,8 +150,12 @@ and -15 it fits the relay pulling in during the reads.
 
 **Consequence: `bridge/tci.py` and the S-meter spec in
 `k3-tci-command-map.md` stay unchanged.** `smcal2.py` now prompts for the P3
-reading at every point, records it as `p3_dbm`, and leaves any point that
-disagrees by more than 1.5 dB out of the fit. The next step re-measures the
+reading at every point, records it as `p3_dbm`, and **fits at the P3 level**
+wherever one was recorded. The P3 is the reference and the CE-4000, uncalibrated
+and ageing, is not. A point more than 1.5 dB from the generator level is flagged
+on the bench and listed by `--fit`, but it stays in the fit. Operator practice:
+set the CE-4000 until the P3 reads the requested level, press Enter at the
+level prompt, then type what the P3 shows. The next step re-measures the
 suspect levels under both AGC settings, with a long settle so the hold has
 time to decay:
 

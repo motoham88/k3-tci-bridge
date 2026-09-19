@@ -43,8 +43,14 @@ async def init(ws):
             return plan, vfo
 
 
-async def vfo_after(ws, cmd, window=2.0):
-    """Send cmd and return the last VFO A the bridge broadcasts after it."""
+async def vfo_after(ws, cmd, window=4.0):
+    """Send cmd and return the last VFO A the bridge broadcasts after it.
+
+    The window is long because the fix-up path is the one being tested: the
+    radio auto-reports the off-band recall the moment BN lands, and the
+    corrected frequency follows only after the FA set, read-back and mode
+    and filter refresh -- well over a second if any read is slow. Last value
+    wins, so a short window would report the uncorrected one."""
     await ws.send(cmd + ";")
     loop, hz = asyncio.get_running_loop(), None
     end = loop.time() + window

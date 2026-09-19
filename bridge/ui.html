@@ -508,18 +508,34 @@ BAND_BUTTONS.forEach(n => {
 function bandOf(hz){ return PLAN.find(b => b.lo <= hz && hz <= b.hi); }
 function paintBands(){
   const cur = bandOf(S.vfoA);
+  if (cur && cur.name === bandPending) bandPending = null;   // arrived
   bEl.querySelectorAll("button").forEach(b =>
     b.classList.toggle("on", !!cur && b.dataset.band === cur.name));
 }
 // Next band up or down from wherever the VFO is, in or out of a band.
 // Walks every band the radio has, not just the buttons, so 60/17/12/6 m
 // stay one press away.
+//
+// A band change takes the bridge most of a second to report back, and a
+// second press inside that would step from the band being LEFT -- two
+// presses from 40 m would both ask for 30 m. So a press steps from the band
+// last asked for until the VFO is seen to arrive, with a timer behind that
+// in case the radio refuses (transmitting, say).
+let bandPending = null, bandPendingTimer = null;
 function bandStep(dir){
-  const f = S.vfoA, i = PLAN.findIndex(b => b.lo <= f && f <= b.hi);
+  // An older bridge sends no plan; step a plain MHz rather than go dead.
+  if (!PLAN.length) return step(dir * 1e6);
+  const f = S.vfoA;
+  let i = PLAN.findIndex(b => b.name === bandPending);
+  if (i < 0) i = PLAN.findIndex(b => b.lo <= f && f <= b.hi);
   const next = i >= 0 ? PLAN[i + dir]
              : dir > 0 ? PLAN.find(b => b.lo > f)
              : PLAN.filter(b => b.hi < f).pop();
-  if (next) send(`band:0,${next.name}`);
+  if (!next) return;
+  bandPending = next.name;
+  clearTimeout(bandPendingTimer);
+  bandPendingTimer = setTimeout(() => { bandPending = null; }, 2000);
+  send(`band:0,${next.name}`);
 }
 
 // ── tuning wheel ──────────────────────────────────────────────────────────

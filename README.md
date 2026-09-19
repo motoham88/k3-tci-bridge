@@ -4,12 +4,19 @@ Turn an Elecraft K3 into a networked remote station, using a Raspberry Pi and
 the open **TCI** (Transceiver Control Interface) protocol — no new radio, no
 proprietary remote box.
 
+![The station's Elecraft K3 front panel, on 14.035.90 MHz CW](K3-FrontPanel.jpeg)
+
+*The radio this bridge drives. The web UI's controls follow its front panel:
+BAND, AGC, PRE/ATT, NB, NR, NTCH, RIT/XIT.*
+
 The Pi presents a TCI WebSocket server on port 50001. Any TCI client can
 connect for CAT control and two-way audio; a browser-based UI is served from
 the same port, so a phone on the LAN needs nothing installed.
 
 Working today: full CAT control, RX and TX audio at 48 kHz, CW keying with
-macros, filter and power control, RIT/XIT, S-meter, PTT with a safety
+macros, filter and power control, RIT/XIT, band buttons that repair a band
+memory left off-band, AGC, preamp, attenuator, NB, NR and notch, S-meter,
+PTT with a safety
 watchdog, the radio's own decoded CW/RTTY/PSK text, multi-client state
 broadcast, and a web UI with a tuning wheel. First on-air CW QSO made through
 it on 20 m, and **WSJT-X 3.0.1 runs over TCI** — rig control and audio both,

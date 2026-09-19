@@ -796,7 +796,9 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
   AI2 — the operator watched both follow.
 - **`SWT34` (NR) and `SWT32` (NTCH)** each tap the switch and cycle it,
   confirmed by ear by the operator. Their state is now read from `DS`
-  (see rule 7).
+  (see rule 7), checked on the radio: NR tapped twice read on, then off;
+  NTCH in CW read **manual**, then off -- CW has no auto notch, so the
+  switch goes straight to the manual one.
 - **`BN00`-`BN10`** each land inside the band `tci.BANDS` gives them, and an
   off-band `FA` sticks as that band's memory (`bandtest.py`; see the note
   under *Frequency and VFO*).

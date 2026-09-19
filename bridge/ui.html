@@ -157,6 +157,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div class="steps" id="filters"></div>
   <div class="row" style="margin-top:8px">
     <button id="split">SPLIT</button>
+    <button id="agc" title="AGC fast/slow">AGC</button>
     <span class="spacer"></span>
     <span class="sub" id="ifinfo"></span>
   </div>
@@ -268,7 +269,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 // always agree. Serving over plain http is deliberate: a browser refuses a
 // ws:// socket from an https:// page, and the bridge speaks ws://.
 const HOST = location.host || "192.168.1.198:50001";
-const S = { mode:"", vfoA:0, vfoB:0, split:false, tx:false, audio:false,
+const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"", tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -356,6 +357,11 @@ function onText(msg){
       PLAN = args.map(a => { const [name, lo, hi] = a.split("/");
                              return { name, lo:+lo, hi:+hi }; });
       buildBands(); break;
+    case "agc_mode":
+      // Lit for fast, the way the radio's display flags AGC-F.
+      S.agc = (args[1]||"").toLowerCase();
+      $("#agc").textContent = S.agc === "fast" ? "AGC-F" : S.agc === "slow" ? "AGC-S" : "AGC";
+      $("#agc").classList.toggle("on", S.agc === "fast"); break;
     case "split_enable":
       S.split = args[1] === "true"; $("#split").classList.toggle("on", S.split); break;
     case "trx":
@@ -675,6 +681,7 @@ function paintModes(){
     b.classList.toggle("on", b.dataset.m === S.mode));
 }
 $("#split").onclick = () => send(`split_enable:0,${S.split ? "false" : "true"}`);
+$("#agc").onclick = () => send(`agc_mode:0,${S.agc === "fast" ? "slow" : "fast"}`);
 
 // ── filter width ──────────────────────────────────────────────────────────
 // The bridge takes carrier-relative edges. Where the passband sits relative

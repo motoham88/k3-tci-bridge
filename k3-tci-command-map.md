@@ -461,7 +461,7 @@ slow and cite the caution above.
 | `mon_volume:<0-100>` | `ML<3 digits>;` | `ML;` | `ML = round(v * 60/100)` | 000-060, applies to the current mode |
 | `sql_level:0,<0-100>` | `SQ<3 digits>;` | `SQ;` | `SQ = round(v * 29/100)` | 000-029 |
 | `sql_enable:0,false` | `SQ000;` | `SQ;` | — | No on/off command; 000 = open. Cache the level |
-| `agc_mode:0,slow` | `GT004;` | `GT;` | — | |
+| `agc_mode:0,slow` | `GT004;` | `GT;` | — | The front-panel AGC key is reported by AI2 as `GT`, and re-broadcast |
 | `agc_mode:0,fast` / `med` | `GT002;` | `GT;` | — | K3 has only fast/slow |
 | `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL` |
 | `rx_nb_param:0,0,<0-100>` | `NL<dd><ii>;` | `NL;` | scale to 00-21 each | `dd` = DSP NB level, `ii` = IF NB level |

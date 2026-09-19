@@ -164,6 +164,7 @@ class RadioState:
         self.muted = False
         self.mon_level = 0
         self.tm_mode = 0            # 0 = RF power on the bargraph, 1 = ALC
+        self.agc = "slow"           # TCI agc_mode: the K3 has fast and slow
 
 
 class Bridge:
@@ -226,6 +227,7 @@ class Bridge:
         self.refresh_if()
         self.refresh_filter()
         self.refresh_tm()
+        self.refresh_agc()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -369,6 +371,7 @@ class Bridge:
             f"mon_volume:{self._read_mon()}",
             f"volume:{s.volume_db}",
             f"mute:0,{bool_str(s.muted)}",
+            f"agc_mode:0,{s.agc}",
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1326,6 +1329,34 @@ class Bridge:
             return [], [f"volume:{self.state.volume_db}"]
         return [f"volume:{self.state.volume_db}"], []
 
+    # -- AGC --------------------------------------------------------------
+    # GT002 fast, GT004 slow. Without K22 the radio has no AGC-off, so a
+    # TCI "off" is refused rather than mapped to something it is not
+    # (command map, "Unmappable in v1"); "normal" and "med" mean fast.
+    AGC_TO_GT = {"fast": "GT002", "normal": "GT002", "med": "GT002",
+                 "slow": "GT004"}
+
+    def _parse_gt(self, r) -> str | None:
+        if r and r.startswith("GT") and len(r) >= 5:
+            return {"002": "fast", "004": "slow"}.get(r[2:5])
+        return None
+
+    def refresh_agc(self) -> None:
+        agc = self._parse_gt(self.cat.ask("GT"))
+        if agc:
+            self.state.agc = agc
+
+    def _cmd_agc_mode(self, args):
+        if len(args) >= 2:                      # SET
+            gt = self.AGC_TO_GT.get(args[1].lower())
+            if gt is None:
+                log.info("unsupported agc_mode %r ignored", args[1])
+                return [], []
+            self.cat.set_verified(gt, "GT", gt + ";")
+            self.refresh_agc()
+            return [], [f"agc_mode:0,{self.state.agc}"]
+        return [f"agc_mode:0,{self.state.agc}"], []
+
     def _cmd_mute(self, args):
         if len(args) >= 2:
             self.state.muted = args[1].lower() == "true"
@@ -1543,6 +1574,10 @@ class Bridge:
                 s.vfo_b = int(msg[2:13]); out.append(f"vfo:0,1,{s.vfo_b}")
             except ValueError:
                 pass
+        elif msg.startswith("GT") and self._parse_gt(msg):
+            # The AGC key on the front panel, reported by AI2.
+            s.agc = self._parse_gt(msg)
+            out.append(f"agc_mode:0,{s.agc}")
         elif msg.startswith("MD") and len(msg) >= 4 and msg[2] in K3_TO_TCI:
             s.mode = K3_TO_TCI[msg[2]]
             out.append(f"modulation:0,{s.mode}")

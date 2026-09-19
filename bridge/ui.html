@@ -88,7 +88,7 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #rev{touch-action:none; -webkit-touch-callout:none}
 /* "XFIL: FL3" on one line even at 360 px. */
 #xfil{padding-left:4px; padding-right:4px; white-space:nowrap}
-#bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
+#bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px}
 #bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
 
 /* decoded text */
@@ -180,6 +180,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
   <div id="wheel"><div id="ticks"></div><div class="mark"></div></div>
   <div id="wrate"></div>
+  <div class="lbl" style="margin:10px 0 6px">Band</div>
   <div id="bands"></div>
 </div>
 

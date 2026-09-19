@@ -478,6 +478,7 @@ slow and cite the caution above.
 | `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL`; and `NB1` with `NL0000` blanks nothing, so the bridge also broadcasts `nb_levels` |
 | `preamp:0,<bool>` (bridge's own) | `PA1;` / `PA0;` | `PA;` | — | Reported on band change and by AI2 |
 | `attenuator:0,<bool>` (bridge's own) | `RA01;` / `RA00;` | `RA;` | — | One 10 dB pad on this K3 |
+| `xfil_tap:0` (bridge's own) | `SWT29;` | `XF;`, then `BW;`/`IS;` | `XFn` = FL1-FL5 | Broadcast as `xfil:0,<n>` plus `rx_filter_band`. **Each crystal resets the DSP width to suit itself** (measured in CW: FL4 400 Hz → FL5 250 → FL3 2700 → FL4 500, not back to 400). In CW the tap cycles FL4 → FL5 → FL3 only. AI2 reports no `XF`; the reconcile sweep reads it |
 | `nr_tap:0` / `notch_tap:0` (bridge's own) | `SWT34;` / `SWT32;` | `DS;` byte `f` | — | No NR or notch command exists, so these press the switch; the result is read back and broadcast as `rx_nr_enable` (TCI's) and `notch:0,off\|auto\|manual` (the bridge's own). AI2 reports neither, so front-panel presses arrive via the 3 s reconcile sweep. Refused while transmitting |
 | `rx_nb_param:0,0,<0-100>` | `NL<dd><ii>;` | `NL;` | scale to 00-21 each | `dd` = DSP NB level, `ii` = IF NB level |
 | `lock:0,<bool>` | `LK1;` / `LK0;` | `LK;` | — | VFO A lock; `LK$` is VFO B. **Locks the knob only: an `FA` SET still moves VFO A with `LK1` set** (measured). The web UI refuses its own tuning while locked; the bridge passes CAT through, as the radio does |

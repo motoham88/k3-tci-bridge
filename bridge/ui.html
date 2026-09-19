@@ -176,12 +176,13 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <span class="sub" id="ifinfo"></span>
   </div>
   <div class="lbl" style="margin:10px 0 6px">Receive</div>
-  <div class="steps">
+  <div class="steps" style="grid-template-columns:repeat(6,1fr)">
     <button id="pre">PRE</button>
     <button id="att">ATT</button>
     <button id="nb">NB</button>
     <button id="nr" title="Presses NR on the radio">NR</button>
     <button id="ntch" title="Presses NTCH on the radio, which cycles it">NTCH</button>
+    <button id="xfil" title="Presses XFIL on the radio: next crystal filter">XFIL</button>
   </div>
   <div id="nbhint"></div>
   <div class="row" style="margin-top:8px">
@@ -302,7 +303,7 @@ const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
             pre:false, att:false, nb:false, nbLevels:[0,0], nr:false, notch:"off",
             rit:false, xit:false, ritOffset:0,
-            sqlOn:false, sqlLevel:0, lock:false, tx:false, audio:false,
+            sqlOn:false, sqlLevel:0, lock:false, xfil:0, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -399,6 +400,7 @@ function onText(msg){
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
+    case "xfil":        S.xfil = +args[1] || 0; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
     case "sql_enable":  S.sqlOn = args[1] === "true"; paintSql(); break;
@@ -742,6 +744,7 @@ $("#att").onclick = () => send(`attenuator:0,${!S.att}`);
 $("#nb").onclick  = () => send(`rx_nb_enable:0,${!S.nb}`);
 $("#nr").onclick   = () => send("nr_tap:0");
 $("#ntch").onclick = () => send("notch_tap:0");
+$("#xfil").onclick = () => send("xfil_tap:0");
 // Squelch in the radio's own steps, 0-29, where 0 is open. The wire is
 // TCI's 0-100, so the slider converts both ways; the steps are 3.4 apart,
 // so the round trip lands back on the same one.
@@ -775,6 +778,8 @@ function paintRx(){
   $("#nr").classList.toggle("on", S.nr);
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
+  // Not a switch with an off, so never lit: it names the crystal in use.
+  $("#xfil").textContent = S.xfil ? `FL${S.xfil}` : "XFIL";
   // NB1 with both blanker levels at 00 blanks nothing.
   $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]
     ? "NB is on but both blanker levels are 0, so it does nothing. Hold NB"

@@ -173,6 +173,7 @@ class RadioState:
         self.sql_level = 0          # TCI 0-100; kept while squelch is open
         self.sql_on = False         # SQ000 is open: there is no on/off
         self.lock = False           # VFO A lock
+        self.xfil = 0               # crystal filter FL1-FL5; 0 = not read yet
         self.notch = "off"          # off / auto / manual, likewise
 
 
@@ -239,6 +240,7 @@ class Bridge:
         self.refresh_agc()
         self.refresh_rx_frontend()
         self.refresh_display()
+        self.refresh_xfil()
         self.refresh_sql_lock()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
@@ -386,6 +388,7 @@ class Bridge:
             f"agc_mode:0,{s.agc}",
             *self.rx_frontend_notifications(),
             *self.display_notifications(),
+            f"xfil:0,{s.xfil}",
             *self.sql_lock_notifications(),
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
@@ -1476,6 +1479,29 @@ class Bridge:
         time.sleep(0.25)      # switch emulation wants a gap before the next
         self.refresh_display()
         return [], self.display_notifications()
+
+    # -- XFIL -------------------------------------------------------------
+    # The tap cycles the crystal roofing filters (SWT29); XF reads which one
+    # is in, FL1-FL5, in plain ASCII. Picking a crystal can narrow what the
+    # DSP passband may be, so the filter is re-read and re-broadcast too.
+    # AI2 is not known to report XF, so a press at the radio arrives through
+    # the server's reconcile sweep.
+
+    def refresh_xfil(self) -> None:
+        r = self.cat.ask("XF")
+        if r and r.startswith("XF") and len(r) >= 3 and r[2] in "12345":
+            self.state.xfil = int(r[2])
+
+    def _cmd_xfil_tap(self, args):
+        if self.state.transmitting:
+            return [], []
+        self.cat.send("SWT29")
+        time.sleep(0.25)      # switch emulation wants a gap before the next
+        self.refresh_xfil()
+        self.refresh_filter()
+        s = self.state
+        return [], [f"xfil:0,{s.xfil}",
+                    f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
 
     def _cmd_nr_tap(self, args):
         return self._tap(34)

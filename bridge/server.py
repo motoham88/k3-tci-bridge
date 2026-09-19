@@ -465,7 +465,7 @@ class Server:
 
     async def reconcile_task(self, period: float = 3.0) -> None:
         """AI2 reports only a subset of controls, so sweep periodically and
-        push anything that drifted. Cheap: one IF read and one DS read."""
+        push anything that drifted. Cheap: IF, DS and XF, one read each."""
         while True:
             await asyncio.sleep(period)
             if not self.clients:
@@ -475,10 +475,13 @@ class Server:
             # NR and notch: no AI2 report exists for either, so this sweep
             # is the only way a press at the radio reaches the page.
             await asyncio.to_thread(self.bridge.refresh_display)
+            # XFIL likewise: no AI2 report is known for it.
+            await asyncio.to_thread(self.bridge.refresh_xfil)
             after = vars(self.bridge.state)
             if after != before:
                 await self.broadcast(self.bridge.if_notifications()
-                                     + self.bridge.display_notifications())
+                                     + self.bridge.display_notifications()
+                                     + [f"xfil:0,{self.bridge.state.xfil}"])
 
     async def run(self) -> None:
         self.loop = asyncio.get_running_loop()

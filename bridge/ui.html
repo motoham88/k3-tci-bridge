@@ -170,8 +170,14 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div class="steps" id="filters"></div>
   <div class="row" style="margin-top:8px">
     <span class="lbl" style="min-width:3.2em">Width</span>
-    <input type="range" id="bw" min="50" max="2800" step="50" value="400">
+    <input type="range" id="bw" min="50" max="2800" step="50" value="400" style="flex:1;width:auto">
     <span class="sub" id="bwv" style="min-width:3.5em;text-align:right">—</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Shift</span>
+    <input type="range" id="shift" min="100" max="1050" step="10" value="590" style="flex:1;width:auto">
+    <span class="sub" id="shiftv" style="min-width:3.5em;text-align:right">—</span>
+    <button id="shiftnorm" style="padding:5px 9px;font-size:12px" title="Re-centre the passband, as NORM does on the radio">NORM</button>
   </div>
   <div class="row" style="margin-top:8px">
     <button id="split">SPLIT</button>
@@ -192,7 +198,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div id="nbhint"></div>
   <div class="row" style="margin-top:8px">
     <span class="lbl" style="min-width:3.2em">SQL</span>
-    <input type="range" id="sql" min="0" max="29" value="0">
+    <input type="range" id="sql" min="0" max="29" value="0" style="flex:1;width:auto">
     <span class="sub" id="sqlv" style="min-width:3.5em;text-align:right">open</span>
   </div>
   <div id="ritrow">
@@ -405,6 +411,7 @@ function onText(msg){
     case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
     case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
+    case "if_shift":    S.ifc = +args[1] || 0; paintShift(); break;
     case "xfil":        S.xfil = +args[1] || 0; S.xfilHz = +args[2] || 0; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
@@ -840,7 +847,31 @@ function paintFilters(){
   const w = S.fhi - S.flo;
   $("#bwnow").textContent = w > 0 ? `${(w/1000).toFixed(w < 1000 ? 2 : 1)} kHz` : "";
   paintWidth();
+  paintShift();
 }
+
+// ── SHIFT slider: the SHIFT knob ──────────────────────────────────────────
+// The AF centre of the passband in Hz (the bridge's if_shift, i.e. IS),
+// the figure the radio itself shows while SHIFT turns. Ranges are what the
+// radio accepted (measured): CW 100-1050, with NORM at the PITCH; USB with
+// a 2.4k filter 400-2600, NORM 1500 -- it clamps tighter as the filter
+// widens, and the read-back puts the slider where it really landed. AM and
+// FM straddle the carrier and were not measured, so SHIFT sits out there.
+const SHIFT_RANGE = { cw:[100, 1050], ssb:[200, 2800] };
+let shiftDragging = false;
+function paintShift(){
+  const el = $("#shift"), cw = filterSet() === FILTERS.cw;
+  const off = filterSet() === FILTERS.am;
+  el.disabled = off; $("#shiftnorm").disabled = off;
+  const [lo, hi] = cw ? SHIFT_RANGE.cw : SHIFT_RANGE.ssb;
+  el.min = lo; el.max = hi;
+  if (shiftDragging) return;
+  if (off){ $("#shiftv").textContent = "—"; return; }
+  if (S.ifc > 0){ el.value = S.ifc; $("#shiftv").textContent = S.ifc + " Hz"; }
+}
+$("#shift").oninput = e => { shiftDragging = true; $("#shiftv").textContent = e.target.value + " Hz"; };
+$("#shift").onchange = e => { shiftDragging = false; send(`if_shift:0,${e.target.value}`); };
+$("#shiftnorm").onclick = () => send("if_shift:0,norm");
 
 // ── width slider: the WIDTH knob ──────────────────────────────────────────
 // Sets the DSP bandwidth (BW) and leaves the passband centre where it is,
@@ -853,7 +884,7 @@ function widthRange(){
   return filterSet() === FILTERS.cw ? BW_MAX.cw
        : filterSet() === FILTERS.am ? BW_MAX.am : BW_MAX.ssb;
 }
-function fmtHz(w){ return w >= 1000 ? (w/1000).toFixed(2).replace(/0$/, "") + "k" : String(w); }
+function fmtHz(w){ return w >= 1000 ? (w/1000).toFixed(2).replace(/0$/, "") + " kHz" : w + " Hz"; }
 function paintWidth(){
   const el = $("#bw"); el.max = widthRange();
   if (bwDragging) return;                       // not under the finger

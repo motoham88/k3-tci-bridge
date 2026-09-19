@@ -158,6 +158,7 @@ class RadioState:
         # Passband edges in Hz relative to the carrier, as TCI states them.
         self.filter_lo = -1500
         self.filter_hi = 1500
+        self.if_centre = 0          # IS: AF centre of the passband, Hz
         # TCI master volume, in dB on the wire (-60..0). Applied in software
         # to the audio frames -- see audio.rx_frame.
         self.volume_db = 0
@@ -282,6 +283,7 @@ class Bridge:
         if is_ and is_.startswith("IS ") and len(is_) >= 8:
             try:
                 centre = int(is_[3:7])
+                self.state.if_centre = centre
             except ValueError:
                 pass
         half = width // 2
@@ -368,7 +370,7 @@ class Bridge:
             f"vfo:0,0,{s.vfo_a}",
             f"vfo:0,1,{s.vfo_b}",
             f"modulation:0,{s.mode}",
-            f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}",
+            *self.filter_notifications(),
             f"rx_enable:0,true",
             f"split_enable:0,{bool_str(s.split)}",
             f"rit_enable:0,{bool_str(s.rit_on)}",
@@ -505,7 +507,7 @@ class Bridge:
         self.refresh_filter()
         s = self.state
         return [], [f"vfo:0,0,{s.vfo_a}", f"modulation:0,{s.mode}",
-                    f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
+                    *self.filter_notifications()]
 
     # -- modulation -------------------------------------------------------
 
@@ -538,7 +540,7 @@ class Bridge:
             self.refresh_filter()
             s = self.state
             return [], [f"modulation:0,{s.mode}",
-                        f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
+                        *self.filter_notifications()]
         return [f"modulation:0,{self.state.mode}"], []
 
     # -- trx (PTT) --------------------------------------------------------
@@ -1252,9 +1254,39 @@ class Bridge:
             # what the radio accepted, never what was asked for.
             self.refresh_filter()
             s = self.state
-            return [], [f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
+            return [], [*self.filter_notifications()]
         s = self.state
-        return [f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"], []
+        return [*self.filter_notifications()], []
+
+    def filter_notifications(self) -> list[str]:
+        """The passband, and SHIFT alongside it: TCI's carrier-relative edges
+        cannot say where a CW passband sits (see refresh_filter), so the AF
+        centre goes out as well, as the bridge's own `if_shift`."""
+        s = self.state
+        return [f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}",
+                f"if_shift:0,{s.if_centre}"]
+
+    # -- SHIFT (the bridge's own) ------------------------------------------
+    # `if_shift:0,<Hz>` sets IS, the AF centre of the passband -- the value
+    # the K3 shows while SHIFT is turned. `if_shift:0,norm` re-centres it
+    # (IS 9999, the reference's "center the passband"), which is what NORM
+    # does on the radio. The radio clamps per mode and PITCH; what it
+    # accepted is read back and broadcast.
+
+    def _cmd_if_shift(self, args):
+        if len(args) >= 2:
+            if args[1].lower() == "norm":
+                hz = 9999
+            else:
+                try:
+                    hz = max(0, min(9998, int(float(args[1]))))
+                except ValueError:
+                    return [], []
+            self.cat.send(f"IS {hz:04d}")     # the space is part of it
+            time.sleep(0.12)
+            self.refresh_filter()
+            return [], self.filter_notifications()
+        return self.filter_notifications(), []
 
     def _cmd_rx_sensors_enable(self, args):
         """WSJT-X sends "rx_sensors_enable:false,500" on connect. We do not
@@ -1510,7 +1542,7 @@ class Bridge:
         self.refresh_filter()
         s = self.state
         return [], [self.xfil_notification(),
-                    f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
+                    *self.filter_notifications()]
 
     def _cmd_nr_tap(self, args):
         return self._tap(34)

@@ -94,6 +94,12 @@ button.on{background:var(--accent); border-color:var(--accent); color:#06121f; f
 button:disabled{opacity:.45; cursor:not-allowed}
 .modes{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
 .steps{display:grid; grid-template-columns:repeat(5,1fr); gap:6px}
+/* NR and NTCH are presses, not switches: nothing can read their state back,
+   so they must not look like the toggles beside them. */
+button.tap{border-style:dashed}
+#ritrow{display:grid; grid-template-columns:1fr 1fr .8fr 1.2fr .8fr 1fr; gap:6px; margin-top:8px}
+#ritoff{font-family:var(--mono); font-size:13px; text-align:center; align-self:center}
+#nbhint{color:var(--warn); font-size:12px; margin-top:4px}
 
 /* meter */
 #meter,#txmeter{height:20px; background:var(--panel2); border-radius:5px; overflow:hidden; position:relative}
@@ -160,6 +166,23 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button id="agc" title="AGC fast/slow">AGC</button>
     <span class="spacer"></span>
     <span class="sub" id="ifinfo"></span>
+  </div>
+  <div class="lbl" style="margin:10px 0 6px">Receive</div>
+  <div class="steps">
+    <button id="pre">PRE</button>
+    <button id="att">ATT</button>
+    <button id="nb">NB</button>
+    <button id="nr" class="tap" title="Presses NR on the radio. Its on/off state cannot be read remotely -- listen for it.">NR</button>
+    <button id="ntch" class="tap" title="Presses NTCH on the radio. Its on/off state cannot be read remotely -- listen for it.">NTCH</button>
+  </div>
+  <div id="nbhint"></div>
+  <div id="ritrow">
+    <button id="rit">RIT</button>
+    <button id="xit">XIT</button>
+    <button data-rit="-50">−50</button>
+    <span id="ritoff">+0 Hz</span>
+    <button data-rit="50">+50</button>
+    <button id="ritclr">CLR</button>
   </div>
 </div>
 
@@ -269,7 +292,9 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 // always agree. Serving over plain http is deliberate: a browser refuses a
 // ws:// socket from an https:// page, and the bridge speaks ws://.
 const HOST = location.host || "192.168.1.198:50001";
-const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"", tx:false, audio:false,
+const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
+            pre:false, att:false, nb:false, nbLevels:[0,0],
+            rit:false, xit:false, ritOffset:0, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -362,6 +387,13 @@ function onText(msg){
       S.agc = (args[1]||"").toLowerCase();
       $("#agc").textContent = S.agc === "fast" ? "AGC-F" : S.agc === "slow" ? "AGC-S" : "AGC";
       $("#agc").classList.toggle("on", S.agc === "fast"); break;
+    case "preamp":      S.pre = args[1] === "true"; paintRx(); break;
+    case "attenuator":  S.att = args[1] === "true"; paintRx(); break;
+    case "rx_nb_enable": S.nb = args[1] === "true"; paintRx(); break;
+    case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
+    case "rit_enable":  S.rit = args[1] === "true"; paintRit(); break;
+    case "xit_enable":  S.xit = args[1] === "true"; paintRit(); break;
+    case "rit_offset":  S.ritOffset = +args[1] || 0; paintRit(); break;
     case "split_enable":
       S.split = args[1] === "true"; $("#split").classList.toggle("on", S.split); break;
     case "trx":
@@ -409,8 +441,8 @@ function onText(msg){
       break;
     case "protocol": case "receive_only": case "trx_count": case "channels_count":
     case "vfo_limits": case "if_limits": case "modulations_list": case "iq_samplerate":
-    case "audio_samplerate": case "rx_enable": case "rit_enable": case "xit_enable":
-    case "rit_offset": case "xit_offset": case "mute": case "dds": case "split":
+    case "audio_samplerate": case "rx_enable":
+    case "xit_offset": case "mute": case "dds": case "split":
     case "cw_macros_speed": case "audio_start": case "audio_stop":
     case "tx_profiles_ex": case "tx_profile_ex": case "audio_stream_sample_type":
     case "audio_stream_channels": case "audio_stream_samples":
@@ -682,6 +714,37 @@ function paintModes(){
 }
 $("#split").onclick = () => send(`split_enable:0,${S.split ? "false" : "true"}`);
 $("#agc").onclick = () => send(`agc_mode:0,${S.agc === "fast" ? "slow" : "fast"}`);
+
+// ── receive front end ─────────────────────────────────────────────────────
+// PRE, ATT and NB light from what the radio reports, so a band change --
+// they are stored per band -- or a press at the radio shows here too.
+$("#pre").onclick = () => send(`preamp:0,${!S.pre}`);
+$("#att").onclick = () => send(`attenuator:0,${!S.att}`);
+$("#nb").onclick  = () => send(`rx_nb_enable:0,${!S.nb}`);
+$("#nr").onclick   = () => send("nr_tap:0");
+$("#ntch").onclick = () => send("notch_tap:0");
+function paintRx(){
+  $("#pre").classList.toggle("on", S.pre);
+  $("#att").classList.toggle("on", S.att);
+  $("#nb").classList.toggle("on", S.nb);
+  // NB1 with both blanker levels at 00 blanks nothing.
+  $("#nbhint").textContent = S.nb && !S.nbLevels[0] && !S.nbLevels[1]
+    ? "NB is on but both blanker levels are 0, so it does nothing. Hold NB"
+      + " (LEVEL) on the radio to set one." : "";
+}
+
+// ── RIT / XIT ─────────────────────────────────────────────────────────────
+// One offset register serves both (command map), so there is one readout.
+$("#rit").onclick = () => send(`rit_enable:0,${!S.rit}`);
+$("#xit").onclick = () => send(`xit_enable:0,${!S.xit}`);
+$("#ritclr").onclick = () => send("rit_offset:0,0");
+document.querySelectorAll("[data-rit]").forEach(b =>
+  b.onclick = () => send(`rit_offset:0,${S.ritOffset + +b.dataset.rit}`));
+function paintRit(){
+  $("#rit").classList.toggle("on", S.rit);
+  $("#xit").classList.toggle("on", S.xit);
+  $("#ritoff").textContent = (S.ritOffset >= 0 ? "+" : "") + S.ritOffset + " Hz";
+}
 
 // ── filter width ──────────────────────────────────────────────────────────
 // The bridge takes carrier-relative edges. Where the passband sits relative

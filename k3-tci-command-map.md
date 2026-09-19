@@ -463,7 +463,10 @@ slow and cite the caution above.
 | `sql_enable:0,false` | `SQ000;` | `SQ;` | — | No on/off command; 000 = open. Cache the level |
 | `agc_mode:0,slow` | `GT004;` | `GT;` | — | The front-panel AGC key is reported by AI2 as `GT`, and re-broadcast |
 | `agc_mode:0,fast` / `med` | `GT002;` | `GT;` | — | K3 has only fast/slow |
-| `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL` |
+| `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL`; and `NB1` with `NL0000` blanks nothing, so the bridge also broadcasts `nb_levels` |
+| `preamp:0,<bool>` (bridge's own) | `PA1;` / `PA0;` | `PA;` | — | Reported on band change and by AI2 |
+| `attenuator:0,<bool>` (bridge's own) | `RA01;` / `RA00;` | `RA;` | — | One 10 dB pad on this K3 |
+| `nr_tap:0` / `notch_tap:0` (bridge's own) | `SWT34;` / `SWT32;` | **none** | — | No NR or notch command exists; state is only in `DS`'s icon byte (K31), which rule 7 keeps out of the reader. Taps, not toggles. Refused while transmitting |
 | `rx_nb_param:0,0,<0-100>` | `NL<dd><ii>;` | `NL;` | scale to 00-21 each | `dd` = DSP NB level, `ii` = IF NB level |
 | `lock:0,<bool>` | `LK1;` / `LK0;` | `LK;` | — | VFO A lock; `LK$` is VFO B |
 

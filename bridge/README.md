@@ -23,6 +23,7 @@ Working CAT control **and bidirectional audio streaming**. See
 | `wsjtxmon.py` | Watches WSJT-X transmissions, checks FT8 slot timing |
 | `soak.py` | Long-run audio soak (hours), gap and drift detection |
 | `filtertest.py` | `rx_filter_band` across all mode classes |
+| `rxtest.py` | AGC, PRE, ATT, NB, RIT, XIT each flip and read back |
 | `bandtest.py` | Band buttons land in their bands; whether an off-band frequency sticks in a band memory |
 | `audiobench.py` | RX audio pipeline benchmark (used for the capability eval) |
 

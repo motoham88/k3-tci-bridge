@@ -165,6 +165,10 @@ class RadioState:
         self.mon_level = 0
         self.tm_mode = 0            # 0 = RF power on the bargraph, 1 = ALC
         self.agc = "slow"           # TCI agc_mode: the K3 has fast and slow
+        self.preamp = False
+        self.att = False            # a single 10 dB pad on this K3: RA00/RA01
+        self.nb = False
+        self.nb_levels = (0, 0)     # NL: DSP blanker, IF blanker, 00-21 each
 
 
 class Bridge:
@@ -228,6 +232,7 @@ class Bridge:
         self.refresh_filter()
         self.refresh_tm()
         self.refresh_agc()
+        self.refresh_rx_frontend()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -372,6 +377,7 @@ class Bridge:
             f"volume:{s.volume_db}",
             f"mute:0,{bool_str(s.muted)}",
             f"agc_mode:0,{s.agc}",
+            *self.rx_frontend_notifications(),
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1357,6 +1363,85 @@ class Bridge:
             return [], [f"agc_mode:0,{self.state.agc}"]
         return [f"agc_mode:0,{self.state.agc}"], []
 
+    # -- preamp, attenuator, noise blanker -----------------------------------
+    # The bridge's own messages except rx_nb_enable, which is TCI's. All
+    # three are GET/SET commands that read back as plain ASCII, and the radio
+    # reports all three on a band change -- where they can differ, since
+    # they are stored per band / per RX ANT -- so on_cat_event keeps them
+    # current without polling.
+
+    def _parse_frontend(self, r) -> bool:
+        """Apply a PA, RA, NB or NL reply to the state. True if it was one."""
+        s = self.state
+        if not r:
+            return False
+        try:
+            if r.startswith("PA") and len(r) >= 3 and r[2] in "01":
+                s.preamp = r[2] == "1"
+            elif r.startswith("RA") and len(r) >= 4 and r[2:4].isdigit():
+                s.att = int(r[2:4]) != 0
+            elif r.startswith("NB") and len(r) >= 3 and r[2] in "01":
+                s.nb = r[2] == "1"
+            elif r.startswith("NL") and len(r) >= 6 and r[2:6].isdigit():
+                s.nb_levels = (int(r[2:4]), int(r[4:6]))
+            else:
+                return False
+        except ValueError:
+            return False
+        return True
+
+    def refresh_rx_frontend(self) -> None:
+        for cmd in ("PA", "RA", "NB", "NL"):
+            self._parse_frontend(self.cat.ask(cmd))
+
+    def rx_frontend_notifications(self) -> list[str]:
+        s = self.state
+        # nb_levels because NB1 with both levels at 00 blanks nothing: the
+        # button would light and do nothing, so the page says why.
+        return [f"preamp:0,{bool_str(s.preamp)}",
+                f"attenuator:0,{bool_str(s.att)}",
+                f"rx_nb_enable:0,{bool_str(s.nb)}",
+                f"nb_levels:0,{s.nb_levels[0]},{s.nb_levels[1]}"]
+
+    def _set_frontend(self, args, on_cmd, off_cmd, query):
+        if len(args) >= 2 and args[1].lower() in ("true", "false"):
+            cmd = on_cmd if args[1].lower() == "true" else off_cmd
+            self.cat.set_verified(cmd, query, cmd + ";")
+            self.refresh_rx_frontend()
+            return [], self.rx_frontend_notifications()
+        return self.rx_frontend_notifications(), []
+
+    def _cmd_preamp(self, args):
+        return self._set_frontend(args, "PA1", "PA0", "PA")
+
+    def _cmd_attenuator(self, args):
+        # RA01, not RA10: this K3 has one 10 dB pad and reads RA05/10/15
+        # back as RA01 (command map, "Verified on hardware").
+        return self._set_frontend(args, "RA01", "RA00", "RA")
+
+    def _cmd_rx_nb_enable(self, args):
+        return self._set_frontend(args, "NB1", "NB0", "NB")
+
+    # -- NR and notch: taps, with no state -----------------------------------
+    # The K3 has no NR or notch command, only the front-panel switches
+    # (SWT34 = NR, SWT32 = NTCH, programmer's reference Table 7), and their
+    # on/off state is readable only from DS's icon byte -- binary, which the
+    # line reader deliberately does not take (command map, rule 7). So these
+    # press the button and claim nothing about the result.
+
+    def _tap(self, code):
+        if self.state.transmitting:
+            return [], []
+        self.cat.send(f"SWT{code}")
+        time.sleep(0.1)       # switch emulation wants a gap before the next
+        return [], []
+
+    def _cmd_nr_tap(self, args):
+        return self._tap(34)
+
+    def _cmd_notch_tap(self, args):
+        return self._tap(32)
+
     def _cmd_mute(self, args):
         if len(args) >= 2:
             self.state.muted = args[1].lower() == "true"
@@ -1574,6 +1659,9 @@ class Bridge:
                 s.vfo_b = int(msg[2:13]); out.append(f"vfo:0,1,{s.vfo_b}")
             except ValueError:
                 pass
+        elif msg[:2] in ("PA", "RA", "NB", "NL") and self._parse_frontend(msg):
+            # Front-panel presses and the burst a band change reports.
+            out += self.rx_frontend_notifications()
         elif msg.startswith("GT") and self._parse_gt(msg):
             # The AGC key on the front panel, reported by AI2.
             s.agc = self._parse_gt(msg)
@@ -1590,18 +1678,29 @@ class Bridge:
         # whether the fields being read are present, exactly as refresh_if
         # now does; every one is at IF_LAST_FIELD or below.
         elif msg.startswith("IF") and len(msg) > self.IF_LAST_FIELD:
-            before = (s.mode, s.split, s.transmitting, s.vfo_a)
+            before = vars(s).copy()
             self._parse_if_str(msg)
-            if (s.mode, s.split, s.transmitting, s.vfo_a) != before:
-                out += [f"vfo:0,0,{s.vfo_a}", f"modulation:0,{s.mode}",
-                        f"split_enable:0,{bool_str(s.split)}",
-                        f"trx:0,{bool_str(s.transmitting)}"]
+            if vars(s) != before:
+                out += self.if_notifications()
         return out
+
+    def if_notifications(self) -> list[str]:
+        """Everything one IF reply carries. RIT/XIT are in it because the
+        radio's own RIT and XIT keys have no other way to reach a client."""
+        s = self.state
+        return [f"vfo:0,0,{s.vfo_a}", f"modulation:0,{s.mode}",
+                f"split_enable:0,{bool_str(s.split)}",
+                f"trx:0,{bool_str(s.transmitting)}",
+                f"rit_enable:0,{bool_str(s.rit_on)}",
+                f"xit_enable:0,{bool_str(s.xit_on)}",
+                *self._offset_notifications()]
 
     def _parse_if_str(self, r: str) -> None:
         s = self.state
         try:
             s.vfo_a = int(r[2:13])
+            sign = -1 if r[18] == "-" else 1
+            s.rit_offset = sign * int(r[19:23])
             s.rit_on, s.xit_on = r[23] == "1", r[24] == "1"
             s.transmitting = r[28] == "1"
             s.mode = K3_TO_TCI.get(r[29], s.mode)

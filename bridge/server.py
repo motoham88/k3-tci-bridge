@@ -474,13 +474,7 @@ class Server:
             await asyncio.to_thread(self.bridge.refresh_if)
             after = vars(self.bridge.state)
             if after != before:
-                s = self.bridge.state
-                await self.broadcast([
-                    f"vfo:0,0,{s.vfo_a}",
-                    f"modulation:0,{s.mode}",
-                    f"split_enable:0,{tci.bool_str(s.split)}",
-                    f"trx:0,{tci.bool_str(s.transmitting)}",
-                ])
+                await self.broadcast(self.bridge.if_notifications())
 
     async def run(self) -> None:
         self.loop = asyncio.get_running_loop()

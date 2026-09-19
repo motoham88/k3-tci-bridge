@@ -142,6 +142,12 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <span class="sub" id="host"></span>
 </div>
 
+<div class="panel">
+  <div class="row"><span class="lbl">S-meter</span><span class="spacer"></span><span id="sval">—</span></div>
+  <div id="meter"><div id="bar"></div></div>
+  <div id="scale"><span>S1</span><span>S3</span><span>S5</span><span>S7</span><span>S9</span><span>+20</span><span>+40</span><span>+60</span></div>
+</div>
+
 <div class="panel" id="freqpanel">
   <div id="freq"></div>
   <div id="vfob">B  —</div>
@@ -193,36 +199,14 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
 </div>
 
-<div class="panel">
-  <div class="row"><span class="lbl">S-meter</span><span class="spacer"></span><span id="sval">—</span></div>
-  <div id="meter"><div id="bar"></div></div>
-  <div id="scale"><span>S1</span><span>S3</span><span>S5</span><span>S7</span><span>S9</span><span>+20</span><span>+40</span><span>+60</span></div>
-</div>
-
-<div class="panel">
+<div class="panel" id="decodepanel">
   <div class="row">
-    <button id="audio">▶ Audio</button>
-    <span class="sub" id="astat">off</span>
+    <span class="lbl">Decoded text</span>
     <span class="spacer"></span>
-    <span class="sub" id="lat"></span>
+    <button id="declear" style="padding:5px 9px;font-size:12px">Clear</button>
   </div>
-  <div class="row" style="margin-top:8px">
-    <span class="lbl" style="min-width:3.2em">Pwr</span>
-    <input type="range" id="pwr" min="0" max="100" value="5">
-    <span class="sub" id="pwrw" style="min-width:3.5em;text-align:right">5 W</span>
-    <button id="tune">TUNE</button>
-  </div>
-  <div class="sub" id="pwrwarn" style="color:var(--warn);margin-top:4px" hidden></div>
-  <div class="row" style="margin-top:8px">
-    <span class="lbl" style="min-width:3.2em">Mon</span>
-    <input type="range" id="mon" min="0" max="100" value="0">
-    <span class="sub" id="monv" style="min-width:3.5em;text-align:right">0</span>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <span class="lbl" style="min-width:3.2em">Vol</span>
-    <input type="range" id="vol" min="-60" max="0" value="-10">
-    <span class="sub" id="voldb" style="min-width:3.5em;text-align:right">−10 dB</span>
-  </div>
+  <div id="decode" class="idle" style="margin-top:8px"></div>
+  <div class="sub" id="dechint" style="margin-top:6px"></div>
 </div>
 
 <div class="panel" id="cwpanel">
@@ -258,14 +242,30 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
 </div>
 
-<div class="panel" id="decodepanel">
+<div class="panel">
   <div class="row">
-    <span class="lbl">Decoded text</span>
+    <button id="audio">▶ Audio</button>
+    <span class="sub" id="astat">off</span>
     <span class="spacer"></span>
-    <button id="declear" style="padding:5px 9px;font-size:12px">Clear</button>
+    <span class="sub" id="lat"></span>
   </div>
-  <div id="decode" class="idle" style="margin-top:8px"></div>
-  <div class="sub" id="dechint" style="margin-top:6px"></div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Pwr</span>
+    <input type="range" id="pwr" min="0" max="100" value="5">
+    <span class="sub" id="pwrw" style="min-width:3.5em;text-align:right">5 W</span>
+    <button id="tune">TUNE</button>
+  </div>
+  <div class="sub" id="pwrwarn" style="color:var(--warn);margin-top:4px" hidden></div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Mon</span>
+    <input type="range" id="mon" min="0" max="100" value="0">
+    <span class="sub" id="monv" style="min-width:3.5em;text-align:right">0</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">Vol</span>
+    <input type="range" id="vol" min="-60" max="0" value="-10">
+    <span class="sub" id="voldb" style="min-width:3.5em;text-align:right">−10 dB</span>
+  </div>
 </div>
 
 <div class="panel" id="txpanel">

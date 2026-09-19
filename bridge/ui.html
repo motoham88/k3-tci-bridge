@@ -71,6 +71,8 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #wheel.live #ticks{opacity:.9}
 #wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
 #wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
+#bands{display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-top:6px}
+#bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
 
 /* decoded text */
 #decode{
@@ -145,6 +147,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   </div>
   <div id="wheel"><div id="ticks"></div><div class="mark"></div></div>
   <div id="wrate"></div>
+  <div id="bands"></div>
 </div>
 
 <div class="panel">
@@ -347,6 +350,12 @@ function onText(msg){
       S.mode = (args[1]||"").toUpperCase(); paintModes(); paintFilters(); paintCw(); break;
     case "rx_filter_band":
       S.flo = +args[1]; S.fhi = +args[2]; paintFilters(); break;
+    case "band_plan":
+      // The bridge's own message: name/low/high for every band the radio
+      // has, lowest first. The table lives in tci.py alone.
+      PLAN = args.map(a => { const [name, lo, hi] = a.split("/");
+                             return { name, lo:+lo, hi:+hi }; });
+      paintBands(); break;
     case "split_enable":
       S.split = args[1] === "true"; $("#split").classList.toggle("on", S.split); break;
     case "trx":
@@ -425,10 +434,16 @@ function drawFreq(){
     d.textContent = s[i];
     const up = document.createElement("span"); up.className = "hit up";
     const dn = document.createElement("span"); dn.className = "hit dn";
-    up.onclick = e => { e.stopPropagation(); step(+Math.pow(10, decade)); };
-    dn.onclick = e => { e.stopPropagation(); step(-Math.pow(10, decade)); };
+    // The MHz digit steps band to band instead: one MHz up from 7.050 is
+    // 8.050, which the radio files as the 40 m memory and recalls there
+    // ever after. Every other digit, the strip and the buttons tune freely,
+    // which is how general coverage (WWV, broadcast) stays reachable.
+    const by = decade === 6 ? bandStep : dir => step(dir * Math.pow(10, decade));
+    up.onclick = e => { e.stopPropagation(); by(+1); };
+    dn.onclick = e => { e.stopPropagation(); by(-1); };
     d.append(up, dn); el.appendChild(d);
   }
+  paintBands();
 }
 // Every `vfo` SET costs the bridge a write, a 120 ms settle and a read-back
 // with a 1 s timeout -- all under the lock that serialises EVERY client's
@@ -476,6 +491,37 @@ function step(hz){
   holdFreq();                                   // echoes the accepted value
   sendVfo();
 }
+// ── bands ─────────────────────────────────────────────────────────────────
+// The bridge does the work: it selects the band as the radio's BAND key
+// would, recalling the last frequency used there, and replaces that with a
+// default only if it is off-band. Where it lands is not known here, so
+// nothing is painted ahead of it -- the broadcast repaints.
+const BAND_BUTTONS = ["160","80","40","30","20","15","10"];
+let PLAN = [];                                  // from band_plan
+const bEl = $("#bands");
+BAND_BUTTONS.forEach(n => {
+  const b = document.createElement("button");
+  b.textContent = n; b.dataset.band = n;
+  b.onclick = () => send(`band:0,${n}`);
+  bEl.appendChild(b);
+});
+function bandOf(hz){ return PLAN.find(b => b.lo <= hz && hz <= b.hi); }
+function paintBands(){
+  const cur = bandOf(S.vfoA);
+  bEl.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("on", !!cur && b.dataset.band === cur.name));
+}
+// Next band up or down from wherever the VFO is, in or out of a band.
+// Walks every band the radio has, not just the buttons, so 60/17/12/6 m
+// stay one press away.
+function bandStep(dir){
+  const f = S.vfoA, i = PLAN.findIndex(b => b.lo <= f && f <= b.hi);
+  const next = i >= 0 ? PLAN[i + dir]
+             : dir > 0 ? PLAN.find(b => b.lo > f)
+             : PLAN.filter(b => b.hi < f).pop();
+  if (next) send(`band:0,${next.name}`);
+}
+
 // ── tuning wheel ──────────────────────────────────────────────────────────
 // Complements the digit stepping rather than replacing it: the digits are
 // exact and the wheel is fast, and they are wanted at different moments.

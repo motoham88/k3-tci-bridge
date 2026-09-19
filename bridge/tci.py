@@ -45,6 +45,38 @@ VFO_LIMITS = (100_000, 54_000_000)   # KSYN3A extends the low end
 IF_LIMITS = (-9999, 9999)            # tied to the RIT/XIT offset range
 PTT_WATCHDOG_S = 90.0
 
+# Every band the K3 has: TCI-facing name (metres) -> (BN number, low edge,
+# high edge, default). Edges are the US amateur allocations; the default is
+# where a band button lands when the band's memory turns out to be off-band.
+#
+# WHY THE DEFAULT EXISTS. The K3 keeps one memory per band -- whatever the
+# VFO was on when the band was last left -- and files a general-coverage
+# frequency under the band whose range it falls in. So a mistyped 8.050
+# becomes the 40 m memory, and every later trip to 40 m, from the radio's
+# own BAND key too, lands on 8.050. The band command recalls the memory
+# first, so a sane last-used spot is kept, and overwrites it with the
+# default only when it is outside the band -- which also repairs the memory
+# for the operator at the front panel.
+#
+# The web UI's band buttons and its MHz-digit band stepping are both driven
+# from this table (see init_burst's band_plan), so it lives only here.
+BANDS = {
+    "160": (0,  1_800_000,  2_000_000,  1_850_000),
+    "80":  (1,  3_500_000,  4_000_000,  3_550_000),
+    "60":  (2,  5_330_500,  5_406_500,  5_351_500),
+    "40":  (3,  7_000_000,  7_300_000,  7_050_000),
+    "30":  (4, 10_100_000, 10_150_000, 10_120_000),
+    "20":  (5, 14_000_000, 14_350_000, 14_050_000),
+    "17":  (6, 18_068_000, 18_168_000, 18_080_000),
+    "15":  (7, 21_000_000, 21_450_000, 21_050_000),
+    "12":  (8, 24_890_000, 24_990_000, 24_900_000),
+    "10":  (9, 28_000_000, 29_700_000, 28_050_000),
+    "6":   (10, 50_000_000, 54_000_000, 50_100_000),
+}
+# The band number takes up to 500 ms to settle, during which the radio
+# defers every command; the command map asks for at least 300 ms after BN.
+BAND_SETTLE_S = 0.5
+
 
 def bool_str(v: bool) -> str:
     return "true" if v else "false"
@@ -335,6 +367,10 @@ class Bridge:
             f"mon_volume:{self._read_mon()}",
             f"volume:{s.volume_db}",
             f"mute:0,{bool_str(s.muted)}",
+            # The bridge's own message, like rx_text; other TCI clients
+            # ignore what they do not know. name/low/high per band.
+            "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
+                                    in BANDS.items()),
             "ready",
             "start",
         ]
@@ -398,6 +434,53 @@ class Bridge:
         chan = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
         hz = self.state.vfo_a if chan == 0 else self.state.vfo_b
         return [f"vfo:0,{chan},{hz}"], []
+
+    # -- band (the bridge's own command) -----------------------------------
+
+    def _read_fa(self, timeout: float = 1.0) -> int | None:
+        r = self.cat.ask("FA", timeout=timeout)
+        if r and r.startswith("FA") and len(r) >= 14:
+            try:
+                return int(r[2:13])
+            except ValueError:
+                pass
+        return None
+
+    def _cmd_band(self, args):
+        """band:0,<metres> -- change band the way the radio's BAND key does,
+        then repair the band's memory if it recalled somewhere off-band.
+
+        Holds the command lock for 0.5-0.8 s -- the BN settle, plus the FA
+        fix-up when one is needed -- so every client's commands, PTT
+        included, wait behind it. A band press is a deliberate, occasional
+        act; that is an acceptable price.
+        """
+        if len(args) < 2 or args[1] not in BANDS:
+            return [], []
+        if self.state.transmitting:
+            # Changing band under key moves the transmitter into whatever
+            # the antenna and tuner are not set up for.
+            log.warning("band change to %sm refused while transmitting", args[1])
+            return [], []
+        bn, lo, hi, default = BANDS[args[1]]
+        self.cat.send(f"BN{bn:02d}")
+        time.sleep(BAND_SETTLE_S)
+        hz = self._read_fa()
+        if hz is None or not lo <= hz <= hi:
+            log.info("%sm memory recalled %s -- off-band, setting %d",
+                     args[1], hz, default)
+            self.cat.send(f"FA{default:011d}")
+            time.sleep(0.12)
+            hz = self._read_fa()
+        if hz is not None:
+            self.state.vfo_a = hz
+        # The band memory carries its own mode, and filters are per mode,
+        # so both may have moved -- same as _cmd_modulation.
+        self.refresh_mode()
+        self.refresh_filter()
+        s = self.state
+        return [], [f"vfo:0,0,{s.vfo_a}", f"modulation:0,{s.mode}",
+                    f"rx_filter_band:0,{s.filter_lo},{s.filter_hi}"]
 
     # -- modulation -------------------------------------------------------
 

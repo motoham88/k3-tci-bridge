@@ -790,11 +790,25 @@ class Bridge:
     def _cmd_tune_drive(self, args):
         return self._cmd_drive(args)
 
+    # Power settings at which TUNE starts the internal calibration instead.
+    TUNE_BAD_W = (5, 50)
+
     def _cmd_tune(self, args):
         """TUNE = hold XMIT (SWH16). Emits a carrier at the current power,
         which is how the ATU is asked to tune."""
         if len(args) >= 2:
             on = args[1].lower() == "true"
+            # Exactly 5 W or 50 W makes TUNE start the K3's internal power
+            # calibration rather than a carrier. Checked against the radio's
+            # own PC, not the client's idea of it: a front-panel change or
+            # another client may have moved it. The UI says why; any other
+            # client just sees the tune not start.
+            if on:
+                pc = self._read_pc(-1)
+                if pc in self.TUNE_BAD_W:
+                    log.warning("TUNE refused at exactly %d W -- it starts "
+                                "the K3's internal calibration", pc)
+                    return [], [f"tune:0,{bool_str(self.state.transmitting)}"]
             self.cat.send("SWH16" if on else "RX")
             time.sleep(0.2)
             tq = self.cat.ask("TQ")

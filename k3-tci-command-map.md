@@ -324,11 +324,19 @@ itself fails, the pre-SET value goes out rather than a false confirmation.
 |---|---|---|---|
 | `trx:0,true` | `TX;` | `TQ;` | Refuse (reply `trx:0,false;`) if `DT` is 2 or 3 — `TX;` is ignored in FSK-D/PSK-D |
 | `trx:0,false` | `RX;` | `TQ;` | Terminates TX in all modes including message play |
-| `tune:0,true` | `SWH16;` | `TQ;` | `SWH16` = hold XMIT = TUNE |
+| `tune:0,true` | `SWH16;` | `TQ;` | `SWH16` = hold XMIT = TUNE. **Refused at exactly `PC005` or `PC050`** (reply `tune:0,false;`); see below |
 | `tune:0,false` | `RX;` | `TQ;` | |
 | `drive:0,<0-100>` | `PC<3 digits>;` | `PC;` | Direct percent→watts. 000-110 with KPA3A enabled, 000-012 without |
 | `tune_drive:0,<0-100>` | `PC<3 digits>;` | `PC;` | K3 has no separate tune power; set `PC` before `SWH16` |
 | `mic_level:<0-100>` | `MG<3 digits>;` | `MG;` | **`MG = round(level * 30/100)`** — cap at 030, not 060. See below |
+
+**TUNE at exactly 5 W or 50 W starts the K3's internal power calibration**
+instead of giving a plain carrier. This is the operator's observation of
+this radio; the reference does not document it. The bridge reads `PC`
+before sending `SWH16` and refuses at 005 or 050. It checks the radio's
+value rather than the client's, because the front panel or another client
+may have changed it. The UI blocks TUNE at those two settings too, and says
+to go up or down 1 W.
 
 `TQ;` is the cheap PTT poll — *"the preferred way to check RX/TX status
 since it requires far fewer bytes than an IF response."*

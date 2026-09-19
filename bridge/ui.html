@@ -178,6 +178,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <span class="sub" id="pwrw" style="min-width:3.5em;text-align:right">5 W</span>
     <button id="tune">TUNE</button>
   </div>
+  <div class="sub" id="pwrwarn" style="color:var(--warn);margin-top:4px" hidden></div>
   <div class="row" style="margin-top:8px">
     <span class="lbl" style="min-width:3.2em">Mon</span>
     <input type="range" id="mon" min="0" max="100" value="0">
@@ -383,7 +384,7 @@ function onText(msg){
       break;
     case "mon_enable": break;
     case "drive":
-      if (!isNaN(+args[1])) { $("#pwr").value = +args[1]; $("#pwrw").textContent = (+args[1]) + " W"; }
+      if (!isNaN(+args[1])) { $("#pwr").value = +args[1]; showPwr(+args[1]); }
       break;
     case "tune": break;
     case "cw_keyer_speed":
@@ -735,9 +736,27 @@ $("#audio").onclick = async () => {
 // your own transmitted audio audible in the RX stream during TX.
 $("#mon").oninput = e => { $("#monv").textContent = e.target.value; };
 $("#mon").onchange = e => send(`mon_volume:${e.target.value}`);
-$("#pwr").oninput = e => { $("#pwrw").textContent = e.target.value + " W"; };
+// TUNE at exactly 5 W or 50 W starts the K3's internal power calibration
+// instead of a plain carrier. The bridge refuses it too, against the radio's
+// own PC reading; this is the check that can say why.
+const TUNE_BAD_W = [5, 50];
+function showPwr(w){
+  $("#pwrw").textContent = w + " W";
+  const bad = TUNE_BAD_W.includes(+w);
+  $("#pwrwarn").hidden = !bad;
+  if (bad) $("#pwrwarn").textContent =
+    `TUNE is blocked at exactly ${w} W (it triggers the K3's internal ` +
+    `calibration). Go up or down 1 W.`;
+}
+$("#pwr").oninput = e => showPwr(e.target.value);
 $("#pwr").onchange = e => send(`drive:0,${e.target.value}`);
 $("#tune").onclick = () => {
+  const w = +$("#pwr").value;
+  if (TUNE_BAD_W.includes(w)) {
+    showPwr(w);
+    log(`tune refused at ${w} W -- go up or down 1 W`);
+    return;
+  }
   // Momentary: a carrier long enough for the ATU, then straight back to RX.
   send("tune:0,true"); log("tune");
   setTimeout(() => send("tune:0,false"), 2500);

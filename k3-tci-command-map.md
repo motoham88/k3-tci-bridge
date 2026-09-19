@@ -178,7 +178,7 @@ be carefully tested to ensure that it isn't affecting radio operation."*
 
 | TCI | K3S SET | Read back | Conversion | Notes |
 |---|---|---|---|---|
-| `vfo:0,0,<hz>` | `FA<11 digits>;` | `FA;` | Hz, zero-padded to 11 | Broadcast the accepted value — an out-of-band request snaps to the nearest amateur band |
+| `vfo:0,0,<hz>` | `FA<11 digits>;` | `FA;` | Hz, zero-padded to 11 | Broadcast the accepted value. An out-of-band request is **not** snapped: `FA00008050000` reads back 8050000 (measured) — the radio is general-coverage |
 | `vfo:0,1,<hz>` | `FB<11 digits>;` | `FB;` | same | If VFOs are linked (not split), `FA` also moves `FB` |
 | `split_enable:0,true` | `FT1;` | `IF;` field `p` | — | `FT1` = TX on VFO B, which enters SPLIT |
 | `split_enable:0,false` | `FR0;` | `IF;` field `p` | — | `FR` SET is the documented split cancel; see below |
@@ -191,10 +191,11 @@ The Hz digit is ignored unless the radio is in FINE mode (`SWT49`).
 **Band memories hold whatever was last tuned, general coverage included.**
 The K3 keeps one memory per band and files a frequency under the band whose
 range contains it, so a mistyped 8.050 becomes the 40 m memory and the BAND
-key recalls it there from then on (operator's report; `bandtest.py` checks
-it, and also whether the "snaps to the nearest amateur band" note in the
-`vfo` row holds — the two cannot both be true). The `band` command reads
-back after `BN` and overwrites an off-band recall with the default.
+key recalls it there from then on. Measured by `bandtest.py` on 2026-09-19:
+VFO A took 8.050 as asked, and after leaving 40 m and coming back `BN03`
+recalled 8.050 — the bridge's `band` command then set 7.050. The same run
+checked every `BN` number 00-10 lands inside its band. The `band` command
+reads back after `BN` and overwrites an off-band recall with the default.
 
 **On `FR` vs `FT`:** the reference titles `FR` as *"RX VFO Assignment [K2
 only] and SPLIT Cancel"*. The "K2 only" qualifies the RX-VFO-assignment

@@ -438,8 +438,10 @@ class Bridge:
                 self.state.vfo_a = accepted
             else:
                 self.state.vfo_b = accepted
-            # Broadcast what the radio accepted, not what was asked for: an
-            # out-of-band request snaps to the nearest amateur band.
+            # Broadcast what the radio accepted, not what was asked for.
+            # It is NOT snapped to an amateur band -- the K3 is general
+            # coverage, and 8.050 reads back as 8.050 (measured; see
+            # _cmd_band for why that matters).
             return [], [f"vfo:0,{chan},{accepted}"]
         # GET
         chan = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0

@@ -184,7 +184,7 @@ be carefully tested to ensure that it isn't affecting radio operation."*
 | `split_enable:0,false` | `FR0;` | `IF;` field `p` | — | `FR` SET is the documented split cancel; see below |
 | `dds:0` (GET) | — | — | echo VFO A Hz | No panadapter; report the VFO so clients don't divide by zero |
 | `tx_frequency` (GET) | — | `IF;` field `p` + `FA;`/`FB;` | Hz | VFO B when split, else VFO A |
-| `band:0,<metres>` (bridge's own) | `BN<nn>;`, then `FA` if off-band | `FA;`, `MD;`, `BW;`/`IS;` | metres → `BN` 00-10 (160…6) | Recalls the band memory like the BAND key; if it recalled outside the band, sets the band default, which also repairs the memory. Refused while transmitting. Table in `tci.BANDS`; the UI receives it as `band_plan` |
+| `band:0,<metres>` (bridge's own) | `BN<nn>;`, then `FA` if off-band | `FA;`, `MD;`, `BW;`/`IS;` | metres → `BN` 00-10 (160…6) | Recalls the band memory like the BAND key; if it recalled outside the band, sets the band default, which also repairs the memory. Refused while transmitting. Table in `tci.BANDS`; the UI receives it as `band_plan` and makes one button per band |
 
 The Hz digit is ignored unless the radio is in FINE mode (`SWT49`).
 

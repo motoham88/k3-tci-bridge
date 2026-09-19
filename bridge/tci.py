@@ -58,10 +58,10 @@ PTT_WATCHDOG_S = 90.0
 # default only when it is outside the band -- which also repairs the memory
 # for the operator at the front panel.
 #
-# The web UI's band buttons and its MHz-digit band stepping are both driven
-# from this table (see init_burst's band_plan), so it lives only here.
+# The web UI's band buttons -- one per entry -- and its MHz-digit band
+# stepping are both driven from this table (see init_burst's band_plan), so it lives only here.
 BANDS = {
-    "160": (0,  1_800_000,  2_000_000,  1_850_000),
+    "160": (0,  1_800_000,  2_000_000,  1_830_000),
     "80":  (1,  3_500_000,  4_000_000,  3_550_000),
     # 60 m is channelised in the US and CW must sit on a channel centre:
     # channel 1 (5330.5 kHz USB dial) is centred on 5332.0.

@@ -4,9 +4,9 @@
 Two things only the radio can answer:
 
   1. Does the BN numbering land on the band each button is labelled with?
-     An off-by-one here is silent -- 02, 06 and 08 are the WARC and 60 m
-     slots in between the buttons -- so every button is pressed and the
-     landing frequency checked against the band.
+     An off-by-one here is silent -- it just lands on the neighbouring
+     band -- so every button is pressed and the landing frequency checked
+     against the band.
   2. Does a general-coverage frequency stick in a band's memory? The
      bridge's vfo handler says an out-of-band request snaps to the nearest
      amateur band; the operator's experience is that 8.050 sticks as the
@@ -22,7 +22,6 @@ import sys
 from websockets.asyncio.client import connect
 
 URL = "ws://127.0.0.1:50001"
-BUTTONS = ["160", "80", "40", "30", "20", "15", "10"]
 
 
 async def init(ws):
@@ -75,7 +74,7 @@ async def main():
             return 1
 
         print("=== each button lands inside its own band ===")
-        for n in BUTTONS:
+        for n in plan:                            # one button per band
             hz = await vfo_after(ws, f"band:0,{n}")
             lo, hi = plan[n]
             ok = hz is not None and lo <= hz <= hi

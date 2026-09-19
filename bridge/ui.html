@@ -71,7 +71,7 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
 #wheel.live #ticks{opacity:.9}
 #wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
 #wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
-#bands{display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-top:6px}
+#bands{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:6px}
 #bands button{padding:7px 0; font-size:12px; font-family:var(--mono)}
 
 /* decoded text */
@@ -355,7 +355,7 @@ function onText(msg){
       // has, lowest first. The table lives in tci.py alone.
       PLAN = args.map(a => { const [name, lo, hi] = a.split("/");
                              return { name, lo:+lo, hi:+hi }; });
-      paintBands(); break;
+      buildBands(); break;
     case "split_enable":
       S.split = args[1] === "true"; $("#split").classList.toggle("on", S.split); break;
     case "trx":
@@ -496,15 +496,21 @@ function step(hz){
 // would, recalling the last frequency used there, and replaces that with a
 // default only if it is off-band. Where it lands is not known here, so
 // nothing is painted ahead of it -- the broadcast repaints.
-const BAND_BUTTONS = ["160","80","40","30","20","15","10"];
+//
+// One button per band in the bridge's plan, so the buttons cannot disagree
+// with what the bridge will accept. Rebuilt on every init burst.
 let PLAN = [];                                  // from band_plan
 const bEl = $("#bands");
-BAND_BUTTONS.forEach(n => {
-  const b = document.createElement("button");
-  b.textContent = n; b.dataset.band = n;
-  b.onclick = () => send(`band:0,${n}`);
-  bEl.appendChild(b);
-});
+function buildBands(){
+  bEl.innerHTML = "";
+  PLAN.forEach(({ name }) => {
+    const b = document.createElement("button");
+    b.textContent = name; b.dataset.band = name;
+    b.onclick = () => send(`band:0,${name}`);
+    bEl.appendChild(b);
+  });
+  paintBands();
+}
 function bandOf(hz){ return PLAN.find(b => b.lo <= hz && hz <= b.hi); }
 function paintBands(){
   const cur = bandOf(S.vfoA);

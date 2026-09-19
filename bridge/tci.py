@@ -170,6 +170,9 @@ class RadioState:
         self.nb = False
         self.nb_levels = (0, 0)     # NL: DSP blanker, IF blanker, 00-21 each
         self.nr = False             # from DS only -- see refresh_display
+        self.sql_level = 0          # TCI 0-100; kept while squelch is open
+        self.sql_on = False         # SQ000 is open: there is no on/off
+        self.lock = False           # VFO A lock
         self.notch = "off"          # off / auto / manual, likewise
 
 
@@ -236,6 +239,7 @@ class Bridge:
         self.refresh_agc()
         self.refresh_rx_frontend()
         self.refresh_display()
+        self.refresh_sql_lock()
         log.info("primed: A=%d B=%d mode=%s split=%s",
                  self.state.vfo_a, self.state.vfo_b,
                  self.state.mode, self.state.split)
@@ -382,6 +386,7 @@ class Bridge:
             f"agc_mode:0,{s.agc}",
             *self.rx_frontend_notifications(),
             *self.display_notifications(),
+            *self.sql_lock_notifications(),
             # The bridge's own message, like rx_text; other TCI clients
             # ignore what they do not know. name/low/high per band.
             "band_plan:" + ",".join(f"{n}/{lo}/{hi}" for n, (_, lo, hi, _)
@@ -1478,6 +1483,76 @@ class Bridge:
     def _cmd_notch_tap(self, args):
         return self._tap(32)
 
+    # -- squelch and VFO lock -----------------------------------------------
+    # SQ is 000-029 and 000 is open; there is no separate on/off. TCI has
+    # both, so the level is kept here while squelch is off and written back
+    # when it comes on. On this radio SQ acts on the main receiver only if
+    # CONFIG:SQ MAIN is numeric (programmer's reference, SQ).
+
+    SQ_MAX = 29
+
+    def _sq_to_tci(self, n: int) -> int:
+        return round(n * 100 / self.SQ_MAX)
+
+    def _tci_to_sq(self, v: int) -> int:
+        return max(0, min(self.SQ_MAX, round(v * self.SQ_MAX / 100)))
+
+    def _parse_sql_lock(self, r) -> bool:
+        s = self.state
+        if r and r.startswith("SQ") and len(r) >= 5 and r[2:5].isdigit():
+            n = int(r[2:5])
+            s.sql_on = n > 0
+            if n > 0:
+                s.sql_level = self._sq_to_tci(n)
+            return True
+        if r and r.startswith("LK") and len(r) >= 3 and r[2] in "01":
+            s.lock = r[2] == "1"
+            return True
+        return False
+
+    def refresh_sql_lock(self) -> None:
+        for cmd in ("SQ", "LK"):
+            self._parse_sql_lock(self.cat.ask(cmd))
+
+    def sql_lock_notifications(self) -> list[str]:
+        s = self.state
+        return [f"sql_enable:0,{bool_str(s.sql_on)}",
+                f"sql_level:0,{s.sql_level}",
+                f"lock:0,{bool_str(s.lock)}"]
+
+    def _write_sq(self, n: int):
+        cmd = f"SQ{n:03d}"
+        self.cat.set_verified(cmd, "SQ", cmd + ";")
+        self.refresh_sql_lock()
+        return [], self.sql_lock_notifications()
+
+    def _cmd_sql_enable(self, args):
+        if len(args) >= 2 and args[1].lower() in ("true", "false"):
+            on = args[1].lower() == "true"
+            return self._write_sq(self._tci_to_sq(self.state.sql_level)
+                                  if on else 0)
+        return self.sql_lock_notifications(), []
+
+    def _cmd_sql_level(self, args):
+        if len(args) >= 2:
+            try:
+                v = max(0, min(100, int(float(args[1]))))
+            except ValueError:
+                return [], []
+            self.state.sql_level = v
+            if self.state.sql_on:
+                return self._write_sq(self._tci_to_sq(v))
+            return [], self.sql_lock_notifications()
+        return self.sql_lock_notifications(), []
+
+    def _cmd_lock(self, args):
+        if len(args) >= 2 and args[1].lower() in ("true", "false"):
+            cmd = "LK1" if args[1].lower() == "true" else "LK0"
+            self.cat.set_verified(cmd, "LK", cmd + ";")
+            self.refresh_sql_lock()
+            return [], self.sql_lock_notifications()
+        return self.sql_lock_notifications(), []
+
     def _cmd_mute(self, args):
         if len(args) >= 2:
             self.state.muted = args[1].lower() == "true"
@@ -1558,6 +1633,22 @@ class Bridge:
         same runs fit it poorly with two lines (2-3 dB rms), and it is only
         used when SMH fails.
         """
+        dbm = self._read_meter_dbm()
+        if dbm is None:
+            return None
+        # THE ATTENUATOR IS IN FRONT OF THE METER, so with it on the radio
+        # reads the signal 10 dB low. Put it back, so the reading stays a
+        # level at the antenna whatever the pad is doing. 10 dB is the
+        # reference's nominal figure: the attempts to measure the step on
+        # WWV were swamped by fading (command map, item 7), and no generator
+        # run has covered it. The preamp is NOT corrected -- its gain was
+        # never measured, so the page flags the reading instead.
+        return dbm + (self.ATT_DB if self.state.att else 0)
+
+    ATT_DB = 10
+
+    def _read_meter_dbm(self) -> int | None:
+        """The calibrated conversion, at the receiver input."""
         r = self.cat.ask("SMH")
         if r and r.startswith("SMH") and len(r) >= 7:
             n = self._meter_count(r, r[3:6], self.SMH_MAX)
@@ -1695,6 +1786,9 @@ class Bridge:
                 s.vfo_b = int(msg[2:13]); out.append(f"vfo:0,1,{s.vfo_b}")
             except ValueError:
                 pass
+        elif msg[:2] in ("SQ", "LK") and self._parse_sql_lock(msg):
+            # Not known to be reported by AI2; handled in case they are.
+            out += self.sql_lock_notifications()
         elif msg[:2] in ("PA", "RA", "NB", "NL") and self._parse_frontend(msg):
             # Front-panel presses and the burst a band change reports.
             out += self.rx_frontend_notifications()

@@ -406,7 +406,10 @@ anchors read 3-8 dB low everywhere below -35 dBm. Data and method are in
 `tools/README.md`.
 
 Valid for 14.1 MHz, CW, preamp off, attenuator off, RF GAIN at max. Other
-bands, the preamp and the attenuator were not measured. Below about SMH 4
+bands, the preamp and the attenuator were not measured. The bridge adds the
+reference's nominal 10 dB back when the attenuator is on (`tci.ATT_DB`), so
+`rx_smeter` stays a level at the antenna; the preamp is not corrected and
+the web UI marks readings taken with it on (`PRE≈`). Below about SMH 4
 the meter reads the receiver's own noise. Above SMH 96 (-20 dBm) the
 upper line is extrapolated, and the radio's overload relay pulls in at
 -10 dBm.
@@ -468,7 +471,7 @@ slow and cite the caution above.
 | `mute:0,<bool>` | **none — software gain 0** | — | — | Same reason |
 | `mon_volume:<0-100>` | `ML<3 digits>;` | `ML;` | `ML = round(v * 60/100)` | 000-060, applies to the current mode |
 | `sql_level:0,<0-100>` | `SQ<3 digits>;` | `SQ;` | `SQ = round(v * 29/100)` | 000-029 |
-| `sql_enable:0,false` | `SQ000;` | `SQ;` | — | No on/off command; 000 = open. Cache the level |
+| `sql_enable:0,false` | `SQ000;` | `SQ;` | — | No on/off command; 000 = open. Cache the level. Verified: `sql_level:0,34` + enable wrote `SQ010` and read back 34 |
 | `agc_mode:0,slow` | `GT004;` | `GT;` | — | The front-panel AGC key is reported by AI2 as `GT`, and re-broadcast |
 | `agc_mode:0,fast` / `med` | `GT002;` | `GT;` | — | K3 has only fast/slow |
 | `rx_nb_enable:0,<bool>` | `NB1;` / `NB0;` | `NB;` | — | `NB0` overrides any non-zero `NL`; and `NB1` with `NL0000` blanks nothing, so the bridge also broadcasts `nb_levels` |
@@ -476,7 +479,7 @@ slow and cite the caution above.
 | `attenuator:0,<bool>` (bridge's own) | `RA01;` / `RA00;` | `RA;` | — | One 10 dB pad on this K3 |
 | `nr_tap:0` / `notch_tap:0` (bridge's own) | `SWT34;` / `SWT32;` | `DS;` byte `f` | — | No NR or notch command exists, so these press the switch; the result is read back and broadcast as `rx_nr_enable` (TCI's) and `notch:0,off\|auto\|manual` (the bridge's own). AI2 reports neither, so front-panel presses arrive via the 3 s reconcile sweep. Refused while transmitting |
 | `rx_nb_param:0,0,<0-100>` | `NL<dd><ii>;` | `NL;` | scale to 00-21 each | `dd` = DSP NB level, `ii` = IF NB level |
-| `lock:0,<bool>` | `LK1;` / `LK0;` | `LK;` | — | VFO A lock; `LK$` is VFO B |
+| `lock:0,<bool>` | `LK1;` / `LK0;` | `LK;` | — | VFO A lock; `LK$` is VFO B. **Locks the knob only: an `FA` SET still moves VFO A with `LK1` set** (measured). The web UI refuses its own tuning while locked; the bridge passes CAT through, as the radio does |
 
 **`AG` does not affect the USB audio at all.** An earlier draft of this table
 mapped `volume` to `AG`, on the reasonable assumption that the AF gain

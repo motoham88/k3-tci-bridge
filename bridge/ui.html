@@ -68,6 +68,10 @@ h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em}
   margin-left:-1px; background:var(--accent); border-radius:1px;
 }
 #wheel.live{border-color:var(--accent)}
+/* LOCK: the radio's lock does not stop CAT (measured), so the page stops
+   itself, and shows that it has. */
+.locked #freq, .locked #wheel, .locked #wrate, .locked .steps, .locked #bands{
+  opacity:.4; cursor:not-allowed}
 #wheel.live #ticks{opacity:.9}
 #wrate{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px}
 #wrate button{padding:7px 4px; font-size:12px; font-family:var(--mono)}
@@ -138,7 +142,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <span class="sub" id="host"></span>
 </div>
 
-<div class="panel">
+<div class="panel" id="freqpanel">
   <div id="freq"></div>
   <div id="vfob">B  —</div>
   <div class="steps" style="margin-top:8px">
@@ -161,6 +165,7 @@ input[type=range]{width:100%; accent-color:var(--accent)}
   <div class="row" style="margin-top:8px">
     <button id="split">SPLIT</button>
     <button id="agc" title="AGC fast/slow">AGC</button>
+    <button id="lock" title="VFO A lock">LOCK</button>
     <span class="spacer"></span>
     <span class="sub" id="ifinfo"></span>
   </div>
@@ -173,6 +178,11 @@ input[type=range]{width:100%; accent-color:var(--accent)}
     <button id="ntch" title="Presses NTCH on the radio, which cycles it">NTCH</button>
   </div>
   <div id="nbhint"></div>
+  <div class="row" style="margin-top:8px">
+    <span class="lbl" style="min-width:3.2em">SQL</span>
+    <input type="range" id="sql" min="0" max="29" value="0">
+    <span class="sub" id="sqlv" style="min-width:3.5em;text-align:right">open</span>
+  </div>
   <div id="ritrow">
     <button id="rit">RIT</button>
     <button id="xit">XIT</button>
@@ -291,7 +301,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 const HOST = location.host || "192.168.1.198:50001";
 const S = { mode:"", vfoA:0, vfoB:0, split:false, agc:"",
             pre:false, att:false, nb:false, nbLevels:[0,0], nr:false, notch:"off",
-            rit:false, xit:false, ritOffset:0, tx:false, audio:false,
+            rit:false, xit:false, ritOffset:0,
+            sqlOn:false, sqlLevel:0, lock:false, tx:false, audio:false,
             ready:false, flo:0, fhi:0, txLevel:0, txSeen:0,
             decoded:false, meterSeen:0, msgSeen:0, askedAudio:0 };
 const $ = s => document.querySelector(s);
@@ -390,6 +401,9 @@ function onText(msg){
     case "rx_nr_enable": S.nr = args[1] === "true"; paintRx(); break;
     case "notch":       S.notch = args[1] || "off"; paintRx(); break;
     case "nb_levels":   S.nbLevels = [+args[1] || 0, +args[2] || 0]; paintRx(); break;
+    case "sql_enable":  S.sqlOn = args[1] === "true"; paintSql(); break;
+    case "sql_level":   S.sqlLevel = +args[1] || 0; paintSql(); break;
+    case "lock":        S.lock = args[1] === "true"; paintLock(); break;
     case "rit_enable":  S.rit = args[1] === "true"; paintRit(); break;
     case "xit_enable":  S.xit = args[1] === "true"; paintRit(); break;
     case "rit_offset":  S.ritOffset = +args[1] || 0; paintRit(); break;
@@ -523,6 +537,7 @@ function holdFreq(){
   }, FREQ_SETTLE_MS);
 }
 function step(hz){
+  if (S.lock) return;                           // see paintLock
   S.vfoA = Math.max(0, S.vfoA + hz);
   drawFreq();                                   // optimistic; the bridge
   holdFreq();                                   // echoes the accepted value
@@ -543,7 +558,7 @@ function buildBands(){
   PLAN.forEach(({ name }) => {
     const b = document.createElement("button");
     b.textContent = name; b.dataset.band = name;
-    b.onclick = () => send(`band:0,${name}`);
+    b.onclick = () => { if (!S.lock) send(`band:0,${name}`); };
     bEl.appendChild(b);
   });
   paintBands();
@@ -566,6 +581,7 @@ function paintBands(){
 // in case the radio refuses (transmitting, say).
 let bandPending = null, bandPendingTimer = null;
 function bandStep(dir){
+  if (S.lock) return;
   // An older bridge sends no plan; step a plain MHz rather than go dead.
   if (!PLAN.length) return step(dir * 1e6);
   const f = S.vfoA;
@@ -696,7 +712,7 @@ $("#declear").onclick = decodeIdle;
 
 document.querySelectorAll("[data-step]").forEach(b =>
   b.onclick = () => step(+b.dataset.step));
-$("#ab").onclick = () => { const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };
+$("#ab").onclick = () => { if (S.lock) return; const a = S.vfoA; send(`vfo:0,0,${S.vfoB}`); send(`vfo:0,1,${a}`); };
 
 // ── modes ─────────────────────────────────────────────────────────────────
 const MODES = ["LSB","USB","CWL","CWU","AM","NFM","DIGL","DIGU"];
@@ -726,10 +742,37 @@ $("#att").onclick = () => send(`attenuator:0,${!S.att}`);
 $("#nb").onclick  = () => send(`rx_nb_enable:0,${!S.nb}`);
 $("#nr").onclick   = () => send("nr_tap:0");
 $("#ntch").onclick = () => send("notch_tap:0");
+// Squelch in the radio's own steps, 0-29, where 0 is open. The wire is
+// TCI's 0-100, so the slider converts both ways; the steps are 3.4 apart,
+// so the round trip lands back on the same one.
+const SQ_MAX = 29;
+$("#sql").oninput = e => paintSqlValue(+e.target.value);
+$("#sql").onchange = e => {
+  const n = +e.target.value;
+  if (n > 0) send(`sql_level:0,${Math.round(n * 100 / SQ_MAX)}`);
+  send(`sql_enable:0,${n > 0}`);
+};
+function paintSqlValue(n){ $("#sqlv").textContent = n > 0 ? String(n) : "open"; }
+function paintSql(){
+  const n = S.sqlOn ? Math.round(S.sqlLevel * SQ_MAX / 100) : 0;
+  $("#sql").value = n; paintSqlValue(n);
+}
+$("#lock").onclick = () => send(`lock:0,${!S.lock}`);
+// The K3's lock holds its own knob only: a CAT frequency change goes through
+// with LK1 set (measured). So the page refuses its own tuning -- digits,
+// strip, steps, A/B, bands -- while locked. The bridge does NOT refuse:
+// WSJT-X and other clients move the VFO through a front-panel lock today,
+// and a lock set here should not quietly change that.
+function paintLock(){
+  $("#lock").classList.toggle("on", S.lock);
+  $("#freqpanel").classList.toggle("locked", S.lock);
+}
+
 function paintRx(){
   $("#pre").classList.toggle("on", S.pre);
   $("#att").classList.toggle("on", S.att);
   $("#nb").classList.toggle("on", S.nb);
+  $("#sval").title = S.pre ? "Preamp on: its gain is not calibrated, so this reads high" : "";
   $("#nr").classList.toggle("on", S.nr);
   $("#ntch").classList.toggle("on", S.notch !== "off");
   $("#ntch").textContent = S.notch === "manual" ? "NTCH-M" : "NTCH";
@@ -803,9 +846,12 @@ function setMeter(dbm){
   const pct = Math.max(0, Math.min(100, (dbm + 121) / (121 - 13) * 100));
   $("#bar").style.width = pct + "%";
   const over = dbm + 73;
-  $("#sval").textContent = over >= 0
+  // The bridge corrects for the attenuator; the preamp's gain was never
+  // measured, so a reading with it on is flagged rather than trusted.
+  $("#sval").textContent = (over >= 0
     ? `S9+${Math.round(over)}  ${dbm} dBm`
-    : `S${Math.max(0, Math.round(9 + over/6))}  ${dbm} dBm`;
+    : `S${Math.max(0, Math.round(9 + over/6))}  ${dbm} dBm`)
+    + (S.pre ? "  PRE≈" : "");
 }
 
 // ── audio ─────────────────────────────────────────────────────────────────

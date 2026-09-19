@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Round-trip the filter panel's switches on the radio.
 
-AGC, PRE, ATT, NB, RIT and XIT each get flipped, read back through the
+AGC, PRE, ATT, NB, RIT, XIT and LOCK each get flipped, read back through the
 bridge's broadcast, and flipped back. What this proves that a fake radio
 cannot: that each GET answers in the exact format the bridge parses --
 `GT004;`, `PA1;`, `RA01;`, `NB1;` -- rather than something longer that
@@ -19,7 +19,7 @@ from websockets.asyncio.client import connect
 
 URL = "ws://127.0.0.1:50001"
 WATCH = ("agc_mode", "preamp", "attenuator", "rx_nb_enable",
-         "rit_enable", "xit_enable", "nb_levels")
+         "rit_enable", "xit_enable", "nb_levels", "lock")
 
 
 def absorb(state, m):
@@ -66,7 +66,8 @@ async def main():
 
         flips = [("agc_mode", "fast", "slow")] + [
             (n, "true", "false") for n in
-            ("preamp", "attenuator", "rx_nb_enable", "rit_enable", "xit_enable")]
+            ("preamp", "attenuator", "rx_nb_enable", "rit_enable", "xit_enable",
+             "lock")]
         for name, a, b in flips:
             was = state[name][0]
             want = b if was == a else a

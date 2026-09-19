@@ -780,6 +780,19 @@ Bench session against the radio, via the Pi at 38400 baud. Firmware
   restored afterward.)
 - **`NL` format confirmed** as `dd`+`ii`: `NL0001;` = DSP NB 00, IF NB 01.
 
+### Filter-panel switches and band select — 2026-09-19
+
+- **`GT`, `PA`, `RA`, `NB`, `RT`, `XT`** each SET and read back in the
+  format the bridge parses (`rxtest.py`): `GT002;`/`GT004;`, `PA0;`/`PA1;`,
+  `RA00;`/`RA01;`, `NB0;`/`NB1;`.
+- **PRE and ATT pressed at the radio** reach the web UI unprompted, through
+  AI2 — the operator watched both follow.
+- **`SWT34` (NR) and `SWT32` (NTCH)** each tap the switch and cycle it,
+  confirmed by ear by the operator. State is still unreadable without `DS`.
+- **`BN00`-`BN10`** each land inside the band `tci.BANDS` gives them, and an
+  off-band `FA` sticks as that band's memory (`bandtest.py`; see the note
+  under *Frequency and VFO*).
+
 ### TX audio path — confirmed, with two preconditions
 
 USB audio does reach the modulator. Measured in DATA A (`MD6`/`DT0`) in

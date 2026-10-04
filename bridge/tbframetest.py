@@ -349,6 +349,29 @@ def main():
               True, fails)
         check(f"nothing lost for {text[:18]!r}", "".join(chunks), text, fails)
 
+    print("\n=== cw_macros: the receiver is not part of the text ===")
+    # `cw_macros:<trx>,<text>` leads with the receiver. Passing it through
+    # as text keyed "0,CQ TEST" -- a stray zero and comma ahead of every
+    # macro a logger sent -- and the radio gives no sign anything is wrong.
+    # Driven through handle() so the arg split is the real one.
+    for label, line, want in [
+        ("receiver dropped",          "cw_macros:0,CQ TEST KX3H;", ["CQ TEST KX3H"]),
+        ("commas in the text kept",   "cw_macros:0,CQ,CQ;",        ["CQ,CQ"]),
+        ("text that starts with digits", "cw_macros:0,599 TU;",    ["599 TU"]),
+        ("no receiver: all text",     "cw_macros:CQ TEST;",        ["CQ TEST"]),
+        ("receiver we do not have",   "cw_macros:1,CQ TEST;",      []),
+        ("negative receiver",         "cw_macros:-1,CQ;",          []),
+        ("receiver and no text",      "cw_macros:0,;",             []),
+        ("receiver only",             "cw_macros:0;",              []),
+        ("cw_msg is unchanged",       "cw_msg:TEST DE K3;",        ["TEST DE K3"]),
+    ]:
+        b = tci.Bridge(StubCat(None))
+        b.state.mode = "cwl"
+        sent = []
+        b._cw_send = lambda text, sent=sent: sent.append(text) or True
+        b.handle(line)
+        check(label, sent, want, fails)
+
     print("\n=== the stop button abandons what has not been written ===")
     # A stop cannot take back text already inside the radio -- RX; queues
     # behind the KY buffer like everything else the W form defers, measured

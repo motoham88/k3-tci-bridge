@@ -1205,6 +1205,27 @@ class Bridge:
         return [], [f"trx:0,{bool_str(self.state.transmitting)}"]
 
     def _cmd_cw_macros(self, args):
+        # `cw_macros:<trx>,<text>` -- unlike our `cw_msg`, the spec form
+        # leads with the receiver. Handing every arg to _cmd_cw_msg rejoined
+        # it into the text, so `cw_macros:0,CQ TEST` keyed "0,CQ TEST": a
+        # stray zero and comma ahead of every macro a logger sent.
+        #
+        # A base-10 integer in that slot is always the receiver, the rule
+        # AetherSDR applies (TciProtocol::cwMacrosTextFromArgs). Anything but
+        # 0 is refused rather than read as text: we advertise trx_count:1, so
+        # another index is a client confused about which radio it has, and
+        # keying its number is the one thing certain to be wrong. A
+        # non-numeric first arg is text, for clients that omit the receiver.
+        if args:
+            try:
+                trx = int(args[0])
+            except ValueError:
+                trx = None
+            if trx is not None:
+                if trx != 0:
+                    log.warning("cw_macros ignored: no receiver %d", trx)
+                    return [], []
+                args = args[1:]
         return self._cmd_cw_msg(args)
 
     def _cmd_cw_macros_stop(self, args):

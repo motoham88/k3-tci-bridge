@@ -556,9 +556,9 @@ The as-found 010 was ~6 dB quieter for no benefit.
 |---|---|---|---|
 | `cw_keyer_speed:<wpm>,0` | `KS<3 digits>;` | `KS;` | K3 range is 008-050; TCI allows 5-100 — clamp and echo the clamped value |
 | `cw_macros_speed:<wpm>,0` | `KS<3 digits>;` | `KS;` | Same register as above |
-| `cw_msg:<text>` | `KYW<text>;` | `KY;` | **24 characters max per command** — chunk longer text |
-| `cw_macros:<text>` | `KYW<text>;` | `KY;` | Same |
-| `cw_macros_stop` | `RX;` | `TQ;` | Ends the transmission; does NOT interrupt it — see below |
+| `cw_msg:<text>` | `KY <text>;` | `KY;`, `TB;` | **24 characters max per command** — chunk longer text. Plain `KY`, not `KYW` — see below |
+| `cw_macros:<trx>,<text>` | `KY <text>;` | `KY;`, `TB;` | Same. A leading integer is the receiver, not text; only 0 is accepted |
+| `cw_macros_stop` | `RX;` | `TQ;` | Interrupts at once and discards the buffer; broadcasts `trx:0,false` once confirmed |
 | `keyer:0,<bool>` | `TX;` / `RX;` | `TQ;` | Straight key-down has no CAT equivalent; approximate with PTT |
 
 **`VX1` (CW VOX) is a precondition for `KY` keying, and its absence fails
@@ -572,12 +572,11 @@ This sits alongside `MIC+LIN` (TX audio) as the second precondition whose
 only symptom is silence.
 
 **The bridge keys with `TX;` rather than relying on VOX**, and drops it with
-`RX;` queued behind the last chunk — the `W` form defers following commands
-until the message has been sent, so the unkey lands after the last element
-instead of cutting it off. That makes the T/R transition deterministic
-rather than a side effect of the first character arriving, and it means the
-bridge's transmit state is true while CW is going out, which every loop that
-must not poll a transmitting radio depends on.
+`RX;` once the radio has sent the last character (see "Finding the end of a
+message" below). That makes the T/R transition deterministic rather than a
+side effect of the first character arriving, and it means the bridge's
+transmit state is true while CW is going out, which every loop that must
+not poll a transmitting radio depends on.
 
 VOX remains the fallback: if `TX;` does not take, the bridge enables `VX1`
 and sends the text the old way rather than into silence. Nothing here waits
@@ -585,22 +584,41 @@ for the message to finish — this runs under the lock that serialises every
 client's commands — so the PTT watchdog is armed with a generous estimate
 (PARIS timing, doubled, plus ten seconds) in case the queued `RX;` is lost.
 
-Use the `W` ("wait") form — `KYW<text>;` — not `KY <text>;`. It defers
-processing of following commands until the message has been sent, which
-matters because we may send `KS` (speed) right behind it.
+**Use the plain form — `KY <text>;` — not `KYW<text>;`.** The `W` ("wait")
+form defers processing of every following command until the message has
+been sent, and that includes `RX;`: nothing can interrupt a `KYW` message.
+The bridge used `W` until 2026-10-04 and a stop could not work — see below.
+The cost of the plain form is that a `KS` (speed) sent mid-message takes
+effect at once rather than after the message, which is what an operator
+changing speed usually wants.
 
 `KY;` GET returns buffer state: 0 = not full, 1 = full. Poll it before
-sending the next chunk. Note that the radio DOES answer `KY;` while it is
-playing a message, even though it defers other commands — which is what
-makes flow control possible at all.
+sending the next chunk. The buffer holds more than one 24-character packet,
+so "not full" lets several chunks in at once.
 
-**`RX;` does not interrupt a message in progress.** Measured: a 22-character
-message stopped three seconds in finished at 8.6 s; the same message with no
-stop at all finished at 9.7 s. The `W` form defers `RX;` behind the `KY`
-buffer exactly as it defers everything else, so the stop ends the
-transmission rather than interrupting it. The bridge therefore implements
-stop as "abandon the chunks not yet written", which bounds what cannot be
-taken back at one chunk — 24 characters.
+**`RX;` interrupts a message in progress — with plain `KY`.** Measured on the
+air with `bridge/cwstoptest.py` (K3, fw 5.67, 20 WPM, two 20-character
+packets, stop 1.5 s in):
+
+| Chunks | Stop | Result |
+|---|---|---|
+| `KYW` | `RX;` | ran on to the end: unkeyed 12.2 s after the stop |
+| `KY ` | `RX;` | unkeyed within 0.5 s; `TB` to-send went to 0; no re-key in 16 s |
+| `KY ` | `KY @;` | `TB` to-send went to 0, but the radio stays in transmit under `TX;` |
+
+So `RX;` discards the buffered text rather than pausing it. Through the
+bridge and TCI, `cw_macros_stop` 1.5 s into ~16 s of CW now unkeys in about
+0.4-0.5 s, including when the client disconnects straight after the stop
+or sends a new message straight after it.
+
+**Finding the end of a message.** Without `W`, a trailing `RX;` would cut the
+message off, so the bridge waits for it to finish first. `TB`'s to-send
+count (`t`, 0-9 saturating) reaches 0 when the LAST character starts, not
+when it ends — measured: "TEST" at 20 WPM read 3, 2, 1, then 0 at ~1.36 s
+against 1.26 s of sending. So after `t` reads 0 the bridge waits one more
+character, timed from that character's own Morse length plus a dot, then
+sends `RX;`, confirms with `TQ`, and broadcasts `trx:0,false`. On the air the
+last element is complete.
 
 Prosign mapping the K3 accepts inside `KY` text: `(`=KN, `+`=AR, `=`=BT,
 `%`=AS, `*`=SK, `!`=VE. Pass client text through unmodified; these are the

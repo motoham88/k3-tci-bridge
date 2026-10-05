@@ -372,41 +372,144 @@ def main():
         b.handle(line)
         check(label, sent, want, fails)
 
-    print("\n=== the stop button abandons what has not been written ===")
-    # A stop cannot take back text already inside the radio -- RX; queues
-    # behind the KY buffer like everything else the W form defers, measured
-    # on the air as under a second of difference on a nine-second message.
-    # What it CAN do is abandon the chunks still waiting here, which on a
-    # long macro is most of it. That only works because the sending runs off
-    # the connection handler: it used to hold it for the length of the
-    # message, so a client could not interrupt its own transmission.
-    class SlowCat(StubCat):
-        """Answers the buffer poll, slowly enough to interrupt."""
+    print("\n=== CW: a stop interrupts, and a message unkeys only once sent ===")
+    # Measured on the air (cwstoptest.py, 2026-10-04): with `KYW` chunks the
+    # radio defers every following command until its text has been sent, so
+    # the stop's RX; waited behind the whole message -- a stop 1.5 s into
+    # 16 s of CW ended it 15 s later. With plain `KY` it unkeyed within half
+    # a second and discarded the buffer. And TB's to-send count reaches 0
+    # when the LAST character starts, so the unkey waits one character more.
+    class FakeK3(StubCat):
+        """KY room, TQ that follows TX;/RX;, and a scripted TB to-send count."""
+
+        def __init__(self, tb=None):
+            super().__init__(None, {"VX": "VX1;", "KS": "KS020;"})
+            self.tq = "TQ0;"
+            self.tb = list(tb or [])     # to-send counts, one per TB poll
+            self.lock = threading.Lock()
 
         def ask(self, cmd, timeout=0.6, quiet=False):
-            if cmd.rstrip(";") == "KY":
-                time.sleep(0.05)
+            c = cmd.rstrip(";")
+            if c == "KY":
+                time.sleep(0.02)
                 return "KY0;"
-            return self.asks.get(cmd.rstrip(";"))
+            if c == "TQ":
+                return self.tq
+            return self.asks.get(c)
 
-    b = tci.Bridge(SlowCat(None, {"TQ": "TQ1;", "VX": "VX1;"}))
+        def ask_text(self, timeout=0.6):
+            with self.lock:
+                n = self.tb.pop(0) if len(self.tb) > 1 else (self.tb[0] if self.tb else 0)
+            self.sent.append(f"TB?{n}")
+            time.sleep(0.02)
+            return f"TB{n}00;"
+
+        def send(self, cmd):
+            super().send(cmd)
+            if cmd == "TX":
+                self.tq = "TQ1;"
+            elif cmd == "RX":
+                self.tq = "TQ0;"
+
+    def run(b):
+        """Wait for the CW worker, whichever thread is current, to finish."""
+        for _ in range(100):
+            t = b._cw_thread
+            if t is None or not t.is_alive():
+                return
+            t.join(timeout=0.1)
+
+    # A normal message: written as plain KY, unkeyed only after TB reads 0
+    # AND the last character has had time to go out.
+    b = tci.Bridge(FakeK3(tb=[2, 1, 0]))
     b.state.mode = "cwl"
-    long_text = " ".join(["kx3h"] * 40)          # many chunks
+    t0 = time.monotonic()
+    check("message accepted", b._cw_send("tu kx3h"), True, fails)
+    run(b)
+    sent = b.cat.sent
+    check("written as plain KY, never KYW",
+          ([c for c in sent if c.startswith("KY")]), ["KY tu kx3h"], fails)
+    check("keyed first with TX;", sent[0], "TX", fails)
+    check("unkeyed once, after the to-send count reached 0",
+          sent[-3:], ["TB?0", "<rts down>", "RX"], fails)
+    check("one RX in all", sent.count("RX"), 1, fails)
+    # "H" is 7 dot units: 0.42 s at 20 WPM, plus a dot of margin.
+    check("waited out the last character after TB reached 0",
+          time.monotonic() - t0 >= 0.45, True, fails)
+    check("worker gone", b._cw_thread, None, fails)
+    check("the bridge knows the message is over", b.state.transmitting, False, fails)
+
+    # ...and says so to clients at once, rather than at the next reconcile.
+    b = tci.Bridge(FakeK3(tb=[1, 0]))
+    b.state.mode = "cwl"
+    told = []
+    b.broadcast = told.extend
+    b._cw_send("e")
+    run(b)
+    check("end of a message is broadcast as trx:0,false", told, ["trx:0,false"], fails)
+
+    # A stop mid-message: RX at once, nothing written after it.
+    b = tci.Bridge(FakeK3(tb=[9]))        # the radio stays busy
+    b.state.mode = "cwl"
+    long_text = " ".join(["kx3h"] * 40)
     b._cw_send(long_text)
     time.sleep(0.2)
+    stop_at = len(b.cat.sent)
     b.cw_stop()
-    if b._cw_thread:
-        b._cw_thread.join(timeout=5)
-    written = [c for c in b.cat.sent if c.startswith("KYW")]
-    total = len(b._cw_chunks(long_text))
-    check("stopped before writing everything",
-          len(written) < total, True, fails)
-    check("wrote at least something", len(written) >= 1, True, fails)
+    after = b.cat.sent[stop_at:]
+    check("stop unkeys by both routes at once",
+          after[:2], ["<rts down>", "RX"], fails)
+    run(b)
+    later = [c for c in b.cat.sent[stop_at:] if c.startswith("KY ")]
+    check("nothing written after the stop", later, [], fails)
     check("queue emptied", b._cw_queue, [], fails)
-    check("unkeyed by both routes",
-          b.cat.sent[-2:], ["<rts down>", "RX"], fails)
-    # And the thread is not left behind to key the radio again afterwards.
-    check("worker finished", b._cw_thread.is_alive(), False, fails)
+    check("worker gone after a stop", b._cw_thread, None, fails)
+    check("stopped well before writing everything",
+          len([c for c in b.cat.sent if c.startswith("KY ")])
+          < len(b._cw_chunks(long_text)), True, fails)
+
+    # More text while the worker waits for the end: carried on, one unkey.
+    b = tci.Bridge(FakeK3(tb=[3, 3, 3, 3, 3, 2, 1, 0]))
+    b.state.mode = "cwl"
+    b._cw_send("cq test")
+    time.sleep(0.15)                       # worker now waiting on TB
+    b._cw_send("de kx3h")
+    run(b)
+    writes = [c for c in b.cat.sent if c.startswith("KY ")]
+    check("text queued during the end-wait is sent too",
+          writes, ["KY cq test", "KY de kx3h"], fails)
+    check("and the radio is unkeyed once, at the very end",
+          (b.cat.sent.count("RX"), b.cat.sent[-1]), (1, "RX"), fails)
+    check("not re-keyed for the follow-on text",
+          b.cat.sent.count("TX"), 1, fails)
+
+    # cw_macros_stop over TCI: confirms the unkey and tells every client,
+    # so a message sent straight after it keys the radio again.
+    b = tci.Bridge(FakeK3(tb=[9]))
+    b.state.mode = "cwl"
+    b.handle("cw_macros:0,cq cq cq de kx3h kx3h kx3h test;")
+    time.sleep(0.15)
+    check("transmitting while the macro runs", b.state.transmitting, True, fails)
+    _, bcast = b.handle("cw_macros_stop;")
+    check("stop broadcasts trx:0,false", bcast, ["trx:0,false"], fails)
+    check("and the bridge knows it is receiving", b.state.transmitting, False, fails)
+    stop_at = len(b.cat.sent)
+    b.handle("cw_macros:0,tu;")
+    check("a message straight after the stop keys the radio again",
+          "TX" in b.cat.sent[stop_at:], True, fails)
+    b.cw_stop()
+    run(b)
+
+    # A stop with nothing sending still unkeys, and reports nothing.
+    b = tci.Bridge(FakeK3())
+    b.state.mode = "cwl"
+    check("stop while idle: no trx broadcast", b.handle("cw_macros_stop;"), ([], []), fails)
+    check("but still sends RX", "RX" in b.cat.sent, True, fails)
+
+    check("cw_char_seconds: E is one dot", round(tci.cw_char_seconds("E", 20), 3), 0.06, fails)
+    check("cw_char_seconds: 0 is 19 units", round(tci.cw_char_seconds("0", 20), 3), 1.14, fails)
+    check("cw_char_seconds: unknown is timed as the longest",
+          tci.cw_char_seconds("~", 20) >= tci.cw_char_seconds("0", 20), True, fails)
 
     print("\n=== keying by line, and coming back from it ===")
     # The line is worth having because it fails safe -- it drops when this

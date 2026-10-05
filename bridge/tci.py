@@ -103,6 +103,32 @@ def cw_seconds(text: str, wpm: int) -> float:
     return 2 * (12 * len(text) / max(1, wpm)) + 10.0
 
 
+# Morse element patterns for what KY text can carry, including the K3's
+# prosign escapes. Only the length matters here: the unkey after the last
+# character waits for that character to finish.
+_MORSE = {
+    "A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.",
+    "G": "--.", "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..",
+    "M": "--", "N": "-.", "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-",
+    "Y": "-.--", "Z": "--..",
+    "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.",
+    "/": "-..-.", "?": "..--..", ".": ".-.-.-", ",": "--..--", "-": "-....-",
+    "(": "-.--.", "+": ".-.-.", "=": "-...-", "%": ".-...", "*": "...-.-",
+    "!": "...-.",
+}
+
+
+def cw_char_seconds(ch: str, wpm: int) -> float:
+    """How long one character takes to key: its elements and the gaps
+    between them, in PARIS dot units of 1.2/wpm s. An unknown character is
+    timed as the longest there is, so the unkey never lands inside it."""
+    pattern = _MORSE.get(ch.upper(), "--..--")
+    units = sum(1 if e == "." else 3 for e in pattern) + len(pattern) - 1
+    return units * 1.2 / max(1, wpm)
+
+
 def ro_command(hz: int) -> str:
     """RIT/XIT offset -> `RO<sign><4 digits>`.
 
@@ -195,14 +221,12 @@ class Bridge:
         # covers a client that vanishes; nothing in CAT covers the bridge
         # itself vanishing.
         #
-        # NOT USED FOR CW. The unkey at the end of a keyed message has to
-        # wait for the message to finish, and only a CAT command can do that
-        # -- `KYW` defers following commands until the text has been sent.
-        # A line drops the instant it is told to, which would cut the
-        # message off. So CW keeps its `TX;` … `RX;` bracket either way.
+        # NOT USED FOR CW. CW keeps its `TX;` … `RX;` bracket either way,
+        # with the end of a message found by polling the radio (see
+        # _cw_await_end), so the line has nothing to add there.
         self.ptt_line = ptt_line
         self.state = RadioState()
-        self.broadcast = None      # set by the server: callable(str)
+        self.broadcast = None      # set by the server: callable(list[str]), thread-safe
         self._ptt_deadline: float | None = None
         # Which client currently holds PTT. If that client vanishes we
         # unkey immediately rather than waiting out the watchdog -- other
@@ -224,6 +248,7 @@ class Bridge:
         self._cw_thread: threading.Thread | None = None
         self._cw_wpm_now = 20
         self._cw_keyed = False
+        self._cw_last_char = " "    # last character written; see _cw_await_end
         self._keyed_at = 0.0
 
     @property
@@ -1015,12 +1040,9 @@ class Bridge:
             return False
 
         # KEY THE TRANSMITTER, RATHER THAN LEAVING IT TO VOX. `TX;` puts it
-        # up before any text goes out and `RX;` behind the last chunk brings
-        # it down, which is what makes the T/R transition deterministic
-        # instead of a side effect of the first character arriving. The `W`
-        # form is what makes the trailing `RX;` correct: it defers following
-        # commands until the message has been sent, so the unkey lands after
-        # the last element rather than cutting it off.
+        # up before any text goes out and `RX;` after the last character
+        # brings it down, which makes the T/R transition deterministic
+        # instead of a side effect of the first character arriving.
         #
         # VOX stays as the fallback, not the plan. Without either, the K3
         # takes KY text into its buffer and never transmits -- no `?;`, no
@@ -1068,19 +1090,15 @@ class Bridge:
         return True
 
     def cw_stop(self) -> None:
-        """Abandon whatever has not been written yet, and unkey.
+        """Abandon whatever has not been written yet, and unkey at once.
 
-        WHAT A STOP CAN AND CANNOT DO. Text already inside the radio is
-        gone: `RX;` queues behind the `KY` buffer like every other command
-        the `W` form defers, so it ends the transmission rather than
-        interrupting it -- measured on the air, a stop three seconds into a
-        nine-second message changed the finishing time by under a second.
-        The deferral is not a bug to route around: it is the same mechanism
-        that makes an ordinary message unkey at exactly the right moment.
-
-        So a stop cuts at the next chunk boundary. On a long macro that is
-        most of it -- 24 characters is the most the radio can be holding
-        that we cannot take back.
+        `RX;` interrupts a message in progress and discards the text still
+        in the radio's buffer -- measured on the air (cwstoptest.py): unkeyed
+        within half a second, the to-send count straight to 0, no re-key.
+        That holds because chunks go out with the plain `KY` form. With
+        `KYW` the radio defers every following command until its text has
+        been sent, so `RX;` waited behind the whole message and a stop
+        1.5 s into 16 s of CW ended it 15 s later.
         """
         with self._cw_lock:
             dropped = len(self._cw_queue)
@@ -1089,48 +1107,62 @@ class Bridge:
         if dropped:
             log.info("cw: stop -- %d chunk(s) abandoned unsent", dropped)
         self._key_off()
-        # The `RX;` that stop just sent is deferred behind whatever the
-        # radio is still playing, exactly like the one at the end of an
-        # ordinary message -- so it can go missing the same way and needs
-        # the same backstop. Sized to what the radio can still be holding:
-        # a stop abandons everything not yet written, so that is bounded by
-        # the last chunk or two rather than by the whole message.
+        # Backstop in case that `RX;` is lost. Generous: firing early would
+        # only repeat an unkey, firing late leaves a carrier up.
         if self.state.transmitting:
             self._ptt_deadline = time.monotonic() + cw_seconds(
                 "x" * (2 * self.CW_MAX), self._cw_wpm_now)
 
     def _cw_worker(self) -> None:
-        """Write queued chunks, pacing each against the radio's buffer.
+        """Write queued chunks, then unkey once the radio has sent them.
 
-        NO BRIDGE LOCK. The long wait in here is for the radio to finish
-        sending what it already has, and holding the lock that serialises
-        every client's commands across that is what made the stop button
-        useless. Each CAT transaction is atomic inside K3Cat, which is the
-        same footing the S-meter and decoded-text polls already run on.
+        NO BRIDGE LOCK. The long waits in here are for the radio, and
+        holding the lock that serialises every client's commands across them
+        is what made the stop button useless. Each CAT transaction is atomic
+        inside K3Cat, the same footing the S-meter and decoded-text polls
+        run on.
+
+        Plain `KY`, never `KYW`: the `W` form defers every following command
+        until the text has been sent, the stop's `RX;` included, so nothing
+        could interrupt a message. Without it the end of a message has to be
+        found rather than queued behind -- see _cw_await_end.
+
+        Exit decisions are made under _cw_lock, and _cw_thread is cleared in
+        the same breath, so text that _cw_send queues while this is ending
+        is either picked up here or gets a fresh worker -- never stranded.
         """
         try:
             while True:
                 with self._cw_lock:
-                    if self._cw_abort.is_set() or not self._cw_queue:
-                        break
-                    chunk = self._cw_queue.pop(0)
+                    if self._cw_abort.is_set():
+                        self._cw_thread = None
+                        return
+                    chunk = self._cw_queue.pop(0) if self._cw_queue else None
                     wpm = self._cw_wpm_now
                     remaining = len(self._cw_queue)
+                if chunk is None:
+                    if not self._cw_await_end():
+                        continue            # more text, or a stop: re-decide
+                    with self._cw_lock:
+                        if self._cw_queue or self._cw_abort.is_set():
+                            continue
+                        self._cw_thread = None
+                    self._cw_finish()
+                    return
                 if not self._cw_wait_for_room(chunk, wpm):
-                    break                      # stopped while waiting
-                out = "KYW" + chunk      # the chunk already carries its space
-                # DEBUG, not INFO. This was the instrumentation for the
-                # dropped-first-character report: what the bridge actually
-                # wrote, which nothing else records once a message is on the
-                # air and gone. It answered that question -- the text left
-                # here intact every time -- so it goes quiet rather than
-                # away. If the fault returns, `-v` brings it straight back.
+                    continue                # stopped while waiting
+                out = "KY " + chunk      # the chunk already carries its space
+                # DEBUG, not INFO: what the bridge actually wrote, which
+                # nothing else records once a message is on the air and gone.
                 log.debug("cw: write %r (%d left)", out, remaining)
                 self.cat.send(out)
+                self._cw_last_char = chunk.rstrip()[-1:] or " "
         except Exception:
-            log.exception("CW worker failed")
-        finally:
-            self._cw_finish()
+            log.exception("CW worker failed -- unkeying")
+            with self._cw_lock:
+                self._cw_queue.clear()
+                self._cw_thread = None
+            self._key_off()
 
     def _cw_wait_for_room(self, chunk: str, wpm: int) -> bool:
         """Wait until the radio's buffer has room. False if stopped first.
@@ -1139,15 +1171,9 @@ class Bridge:
         answer as a clear buffer -- including the ones that are not answers
         at all: a timeout, or the `?;` of a radio too busy to say. Those are
         exactly when the buffer is most likely to be full, and writing into
-        it is how the middle of a message goes missing.
-
-        An unanswered poll must not stop the message either. The `W` form
-        defers following commands until what is already queued has been
-        sent, so a poll can legitimately go unanswered for as long as the
-        radio takes to key it -- which is why the bound comes from the same
-        arithmetic the watchdog uses rather than from a flat number, and why
-        an unknown answer eventually writes anyway and says so instead of
-        discarding text the operator asked to send.
+        it is how the middle of a message goes missing. An unknown answer
+        eventually writes anyway, bounded by the chunk's own sending time,
+        and says so rather than discarding text the operator asked to send.
         """
         start = time.monotonic()
         deadline = start + cw_seconds(chunk, wpm)
@@ -1162,22 +1188,60 @@ class Bridge:
                         time.monotonic() - start, ky)
         return not self._cw_abort.is_set()
 
-    def _cw_finish(self) -> None:
-        """End of the queue: unkey, and leave a backstop in case it is lost.
+    def _cw_await_end(self) -> bool:
+        """Wait for the radio to finish what it holds. True when it has.
 
-        A bare CAT send rather than `_key_off()`: being held behind the
-        message is the entire point here, and a line drops the instant it is
-        told to. A stop has already unkeyed by both routes, so it skips this.
+        False as soon as more text is queued or a stop arrives, so the
+        worker can carry on or quit instead of unkeying under either.
+
+        `TB`'s to-send count reaches 0 when the LAST character starts, not
+        when it ends -- measured: "TEST" at 20 WPM read 3, 2, 1, then 0 at
+        about 1.36 s against 1.26 s of sending. So after 0 the wait runs
+        one more character, timed from the character itself, before RX.
+
+        Reading TB also consumes received text, which is harmless here:
+        the decoded-text poll is suspended while transmitting anyway.
         """
-        if self._cw_abort.is_set() or not self._cw_keyed:
+        wpm = self._cw_wpm_now
+        deadline = time.monotonic() + cw_seconds("x" * (2 * self.CW_MAX), wpm)
+        while time.monotonic() < deadline:
+            with self._cw_lock:
+                if self._cw_queue or self._cw_abort.is_set():
+                    return False
+            r = self.cat.ask_text(timeout=0.3)
+            if r and r.startswith("TB") and len(r) >= 3 and r[2] == "0":
+                tail = cw_char_seconds(self._cw_last_char, wpm) + 1.2 / max(1, wpm)
+                if self._cw_abort.wait(tail):
+                    return False
+                with self._cw_lock:
+                    return not self._cw_queue
+            if self._cw_abort.wait(0.1):
+                return False
+        log.warning("CW: end of message not confirmed by TB -- unkeying anyway")
+        return True
+
+    def _cw_finish(self) -> None:
+        """The message has been sent: unkey, confirm it, and tell clients.
+
+        Only after a normal end; a stop has already unkeyed. Announced here
+        rather than left to the reconcile sweep, which runs every few
+        seconds: a logger waits on `trx:0,false` to call the message over.
+        """
+        if not self._cw_keyed:
             return
-        self.cat.send("RX")
-        # If that `RX;` is lost the radio sits in transmit with nothing to
-        # bring it back, so the watchdog is armed with an upper bound on
-        # what can still be inside the radio. Generous on purpose: firing
-        # early truncates the transmission it is meant to protect.
-        self._ptt_deadline = time.monotonic() + cw_seconds(
-            "x" * (2 * self.CW_MAX), self._cw_wpm_now)
+        self._key_off()
+        if not self._await_tq(False):
+            log.warning("CW: unkey after the message unconfirmed -- watchdog armed")
+            self._ptt_deadline = time.monotonic() + cw_seconds(
+                "x" * self.CW_MAX, self._cw_wpm_now)
+            return
+        log.info("cw: message sent, unkeyed")
+        with self._lock:
+            self._ptt_deadline = None
+            self._ptt_owner = None
+            self.state.transmitting = False
+        if self.broadcast:
+            self.broadcast(["trx:0,false"])
 
     def _cw_wpm(self, default: int = 20) -> int:
         r = self.cat.ask("KS")
@@ -1229,8 +1293,22 @@ class Bridge:
         return self._cmd_cw_msg(args)
 
     def _cmd_cw_macros_stop(self, args):
+        # A stop now unkeys at once, so report it like `trx:0,false` does:
+        # confirm, then tell every client. Clients waiting on trx to say the
+        # message is over (a logger's STOP) otherwise wait for the reconcile
+        # sweep, and a message sent straight after the stop would find the
+        # bridge still believing it was transmitting and never key.
+        was_keyed = self.state.transmitting
         self.cw_stop()
-        return [], []
+        if not was_keyed:
+            return [], []
+        if not self._await_tq(False):
+            log.warning("CW stop: unkey unconfirmed -- leaving watchdog armed")
+            return [], []
+        self._ptt_deadline = None
+        self._ptt_owner = None
+        self.state.transmitting = False
+        return [], ["trx:0,false"]
 
     def _cw_speed(self, args, name):
         # 1-arg-SET quirk, as in other TCI servers: the value is in args[0]

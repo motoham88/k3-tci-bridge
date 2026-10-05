@@ -19,6 +19,7 @@ Working CAT control **and bidirectional audio streaming**. See
 | `audiotest.py` | RX stream validation + TX audio ingest |
 | `voltest.py` | Software `volume` / `mute` verification |
 | `cwtest.py` | CW keying: speed, mode guard, chunking |
+| `cwstoptest.py` | Can a CW message be stopped? `KYW` vs `KY` against `RX;` and `@`, and when `TB` reaches 0. Talks to the serial port: stop the service first. **Transmits** |
 | `chronotest.py` | TX_CHRONO pacing (start, rate, stop) |
 | `wsjtxmon.py` | Watches WSJT-X transmissions, checks FT8 slot timing |
 | `soak.py` | Long-run audio soak (hours), gap and drift detection |
@@ -182,20 +183,19 @@ ssh kx3h@shack-rpi 'cd ~/k3bridge && setsid --fork ./venv/bin/python server.py >
 - RX audio streaming: `audio_start` / `audio_stop`, float32 stereo at 48 kHz
 - TX audio ingest (float32 and int16), continuous primed playback stream
 - `volume` / `mute` in software, `rx_smeter` at 5 Hz (suppressed in TX)
-- CW text keyed with `TX;` … `KYW<text>;` … `RX;` rather than on VOX
+- CW text keyed with `TX;` … `KY <text>;` … `RX;` rather than on VOX
 - CW sending runs on its own thread, so a stop can interrupt it
 
-**What the CW stop button can and cannot do.** It cannot take back text
-already inside the radio. `RX;` queues behind the `KY` buffer like every
-other command the `W` form defers — measured on the air, a stop three
-seconds into a nine-second message changed the finishing time by under a
-second, indistinguishable from not stopping at all. That deferral is not a
-bug to route around: it is the same mechanism that makes an ordinary message
-unkey at exactly the right moment.
-
-What it does instead is abandon every chunk not yet written. On a long macro
-that is most of it, and 24 characters is the most the radio can be holding
-that we cannot take back.
+**The CW stop button interrupts.** A stop abandons every chunk not yet
+written and sends `RX;`, which the K3 acts on at once, discarding the text
+still in its buffer — measured through TCI, a stop 1.5 s into ~16 s of CW
+unkeys in about 0.4-0.5 s, including when the client disconnects or sends a
+new message straight after it. That works because chunks go out as plain
+`KY`: the `KYW` form the bridge used before deferred `RX;` until the whole
+message had been sent, so a stop could not shorten it. Without `W`, the end
+of an ordinary message is found by polling `TB` (see the command map), and
+the unkey is then broadcast as `trx:0,false`. `cwstoptest.py` measures all
+of this directly over CAT.
 
 **That only works because sending runs off the connection handler.** It used
 to write every chunk inside the command handler, pacing each against the
@@ -223,9 +223,8 @@ both: drop the line, send `RX;`. Dropping an unused line costs nothing and
 transmitter left running.
 
 **CW keeps its `TX;`/`RX;` bracket regardless.** The unkey at the end of a
-keyed message has to wait for the message to finish, and only a CAT command
-can do that — `KYW` defers following commands until the text has been sent.
-A line drops the instant it is told to, which would cut the message off.
+keyed message has to wait for the message to finish, which the bridge finds
+by polling the radio; the line has nothing to add there.
 
 **With the radio set for line keying, ANY program opening the port keys it.**
 A port comes up with DTR and RTS asserted unless told otherwise. Everything

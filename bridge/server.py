@@ -527,6 +527,9 @@ async def amain(args) -> None:
                     "unless it is told not to.")
     bridge.prime()
     server = Server(bridge, args.host, args.port, args.alsa, args.no_audio)
+    # For state the bridge's own threads change, such as the CW worker
+    # unkeying at the end of a message.
+    bridge.broadcast = server.broadcast_threadsafe
     cat.on_event = lambda msg: server.broadcast_threadsafe(
         bridge.on_cat_event(msg))
     cat.enable_auto_info()

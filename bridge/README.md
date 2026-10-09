@@ -217,10 +217,19 @@ in CAT covers the bridge itself vanishing.
 It needs the K3's RS232 menu set to RTS=PTT. A radio set to OFF ignores the
 line and says nothing about it, so an unconfirmed line falls back to `TX;`
 rather than being trusted — otherwise the bridge would report transmitting,
-the client would send audio, and nothing would go out. Unkeying always does
-both: drop the line, send `RX;`. Dropping an unused line costs nothing and
-`RX;` into a receiving radio costs nothing, while getting it wrong costs a
-transmitter left running.
+the client would send audio, and nothing would go out. Unkeying does both:
+drop the line, send `RX;`. Dropping an unused line costs nothing, while
+getting it wrong costs a transmitter left running.
+
+**But not into a radio that is receiving.** A bare `RX;` while the K3
+receives with TEXT DEC on hangs its receive DSP: hiss, the S-meter stuck at
+0, the decoder dead, until a mode change. The VFO, the P3 and CAT carry on,
+so nothing in the bridge notices. Measured 2026-10-09 (MCU 05.67, DSP
+02.88): `SM0006` before one `RX;`, `SM0000` for the 30 s after. A logger
+sends a stop when it closes or when the operator presses Escape, so every
+logger exit used to hang the receiver. The unkey now goes out only if the
+bridge is transmitting or sending CW, or if the radio, when asked, doesn't
+answer a clear `TQ0;`. No answer still unkeys.
 
 **CW keeps its `TX;`/`RX;` bracket regardless.** The unkey at the end of a
 keyed message has to wait for the message to finish, which the bridge finds

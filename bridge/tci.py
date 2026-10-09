@@ -615,14 +615,36 @@ class Bridge:
         return ok
 
     def _key_off(self) -> None:
-        """Unkey by BOTH routes, every time, whatever keyed it.
+        """Unkey by BOTH routes, whatever keyed it -- but only if anything did.
 
-        Dropping an unused line costs nothing and `RX;` into a radio already
-        receiving costs nothing, while getting this wrong costs a transmitter
-        left running. There is no state worth consulting here.
+        `RX;` into a radio already receiving is NOT free: with TEXT DEC on, a
+        bare `RX;` while the K3 receives hangs its receive DSP -- hiss, `SM`
+        stuck at 0, the decoder dead, until a mode change. VFO, P3 and CAT
+        carry on, so nothing here would notice. Measured 2026-10-09 (MCU
+        05.67, DSP 02.88): SM0006 before one `RX;` from a script, SM0000 for
+        the 30 s after. A logger closing or pressing Escape while listening
+        sends a stop, so this used to hang the receiver on every exit.
+
+        So the bridge's own record decides first, and when it says nothing
+        is keyed the radio is asked. Only a clear `TQ0;` skips the unkey: no
+        answer, or `?;`, unkeys as before, since getting this wrong the
+        other way costs a transmitter left running.
         """
+        if not self._may_be_keyed():
+            return
         self.cat.set_ptt_line(False)
         self.cat.send("RX")
+
+    def _may_be_keyed(self) -> bool:
+        # A watchdog deadline alone is not counted: it can outlive the
+        # transmission, and the radio is asked below anyway.
+        if self.state.transmitting:
+            return True
+        with self._cw_lock:
+            if self._cw_queue or (self._cw_thread is not None
+                                  and self._cw_thread.is_alive()):
+                return True
+        return self.cat.ask("TQ", timeout=0.3, quiet=True) != "TQ0;"
 
     def _cmd_trx(self, args):
         if len(args) >= 2:                      # SET

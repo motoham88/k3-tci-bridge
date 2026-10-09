@@ -500,11 +500,30 @@ def main():
     b.cw_stop()
     run(b)
 
-    # A stop with nothing sending still unkeys, and reports nothing.
+    # A stop with nothing sending reports nothing, and sends no RX; to a
+    # radio that says it is receiving: a bare RX; hangs a receiving K3's DSP
+    # when TEXT DEC is on, and a logger sends a stop every time it closes.
     b = tci.Bridge(FakeK3())
     b.state.mode = "cwl"
     check("stop while idle: no trx broadcast", b.handle("cw_macros_stop;"), ([], []), fails)
-    check("but still sends RX", "RX" in b.cat.sent, True, fails)
+    check("and no RX into a receiving radio", "RX" in b.cat.sent, False, fails)
+    b.handle("trx:0,false;")
+    check("nor for an unkey while receiving", "RX" in b.cat.sent, False, fails)
+
+    # Keyed from the front panel, which the bridge did not do: TQ1 says so,
+    # and the stop unkeys.
+    b = tci.Bridge(FakeK3())
+    b.state.mode = "cwl"
+    b.cat.tq = "TQ1;"
+    b.handle("cw_macros_stop;")
+    check("stop while keyed by someone else still sends RX", "RX" in b.cat.sent, True, fails)
+
+    # No answer to TQ: unkey anyway.
+    b = tci.Bridge(FakeK3())
+    b.state.mode = "cwl"
+    b.cat.tq = None
+    b.cw_stop()
+    check("stop with TQ unanswered still sends RX", "RX" in b.cat.sent, True, fails)
 
     check("cw_char_seconds: E is one dot", round(tci.cw_char_seconds("E", 20), 3), 0.06, fails)
     check("cw_char_seconds: 0 is 19 units", round(tci.cw_char_seconds("0", 20), 3), 1.14, fails)
@@ -534,14 +553,19 @@ def main():
     check("line mode off: TX; only",
           (b._key_on(), b.cat.sent), (True, ["TX"]), fails)
 
-    # Unkeying takes BOTH routes whatever keyed it. Dropping an unused line
-    # costs nothing and RX; into a receiving radio costs nothing, while
-    # getting it wrong costs a transmitter left running.
+    # Unkeying takes BOTH routes whatever keyed it: dropping an unused line
+    # costs nothing, while getting it wrong costs a transmitter left running.
+    # But only when the radio may be keyed: RX; into a receiving K3 with
+    # TEXT DEC on hangs its receive DSP.
     for label, line in [("line mode", True), ("CAT mode", False)]:
-        b = tci.Bridge(StubCat(None, UNKEYED), ptt_line=line)
+        b = tci.Bridge(StubCat(None, KEYED), ptt_line=line)
         b._key_off()
         check(f"unkey drops the line and sends RX ({label})",
               b.cat.sent, ["<rts down>", "RX"], fails)
+        b = tci.Bridge(StubCat(None, UNKEYED), ptt_line=line)
+        b._key_off()
+        check(f"unkey of a receiving radio sends nothing ({label})",
+              b.cat.sent, [], fails)
 
     print("\n=== the PTT deadline does not outlive the transmission ===")
     # The CW path arms the watchdog in case its queued RX; goes missing.

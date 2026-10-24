@@ -1,0 +1,2 @@
+SUBSYSTEM=="tty", ATTRS{serial}=="AL047393", SYMLINK+="k3cat", \
+  RUN+="/bin/sh -c 'echo 1 > /sys/bus/usb-serial/devices/%k/latency_timer'"

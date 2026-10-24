@@ -1,0 +1,17 @@
+[Unit]
+Description=K3 to TCI bridge
+After=network-online.target sound.target dev-k3cat.device
+Wants=network-online.target
+
+[Service]
+User=kx3h
+WorkingDirectory=/home/kx3h/k3bridge
+ExecStart=/home/kx3h/k3bridge/venv/bin/python server.py
+# Shutdown forces the radio to receive and disables auto-info; never SIGKILL early
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
